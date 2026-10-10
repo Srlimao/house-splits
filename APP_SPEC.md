@@ -1,9 +1,9 @@
 # HouseSplits - Application Specification
 
-**Version:** 1.0.0  
-**Status:** Approved Architecture Draft  
+**Version:** 2.0.0  
+**Status:** Approved Production Architecture  
 **Target Platform:** Mobile-First Responsive Web Application (PWA)  
-**Stack:** React + Vite + TypeScript + Tailwind CSS + Supabase (PostgreSQL, Auth, Storage, Edge Functions) + Google Gemini AI API  
+**Stack:** React 19 + Vite 6 + TypeScript 5.7 + Tailwind CSS 3.4 + Cloudflare Pages Functions (Edge V8) + Cloudflare D1 (Distributed SQLite) + Cloudflare R2 (Object Storage) + Google Gemini 2.5 Flash AI API  
 
 ---
 
@@ -46,18 +46,22 @@ sequenceDiagram
     autonumber
     actor Admin as House Admin
     participant App as HouseSplits Web App
+    participant Edge as Cloudflare Pages Functions (/api/*)
     participant AI as Google Gemini 2.5 Flash
-    participant DB as Supabase DB & Storage
+    participant D1 as Cloudflare D1 Database
+    participant R2 as Cloudflare R2 Storage
     participant Webhook as Discord / Telegram Webhook
 
     Admin->>App: Upload bill (PDF or camera photo)
-    App->>DB: Upload file to private storage bucket (bills/)
+    App->>Edge: POST /api/upload (Invoice file)
+    Edge->>R2: Store document in private bucket
     App->>AI: Send image/document payload + Structured Schema Prompt
     AI-->>App: Extracted JSON (Provider, Category, Amount, Dates, Inv#)
     App->>App: Calculate split preview using category preset rules
     App->>Admin: Open Interactive Review Modal (pre-filled fields)
-    Admin->>App: Adjust any field / split override & click "Confirm & Ingest"
-    App->>DB: Save bill, splits, and initial status (Pending / Paid)
+    Admin->>App: Adjust any field / split override & click "Save Bill & Generate Splits"
+    App->>Edge: POST /api/bills (Payload + splits)
+    Edge->>D1: Insert bill and split records
     App->>Webhook: Post notification to House Chat channel
     Webhook-->>Admin: "New Electricity bill uploaded: €120.00. Splits generated!"
 ```
@@ -172,115 +176,116 @@ erDiagram
     BILLS ||--o{ PAYMENTS : "settles"
 ```
 
-### 6.2 Table Definitions (DDL)
+### 6.2 Table Definitions (Cloudflare D1 SQLite DDL)
 
 ```sql
--- 1. Households
-CREATE TABLE households (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+-- 1. Households Table
+CREATE TABLE IF NOT EXISTS households (
+    id TEXT PRIMARY KEY,
     name TEXT NOT NULL DEFAULT 'Our Home',
-    currency VARCHAR(3) NOT NULL DEFAULT 'EUR',
-    admin_payment_info JSONB DEFAULT '{"iban": "", "revolut": "", "bizum": "", "notes": ""}'::jsonb,
-    webhook_settings JSONB DEFAULT '{"discord_url": "", "telegram_bot_token": "", "telegram_chat_id": "", "notify_on_new_bill": true, "notify_on_reminders": true}'::jsonb,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
+    currency TEXT NOT NULL DEFAULT 'EUR',
+    invite_code TEXT UNIQUE,
+    admin_payment_info TEXT DEFAULT '{"iban":"","revolut":"","bizum":"","notes":""}',
+    webhook_settings TEXT DEFAULT '{"discord_url":"","notify_on_new_bill":true,"notify_on_payment":true}',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- 2. Profiles (Roommates linked to Supabase Auth)
-CREATE TABLE profiles (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-    household_id UUID REFERENCES households(id) ON DELETE SET NULL,
+-- 2. Profiles Table (Holds authentication and user profile data)
+CREATE TABLE IF NOT EXISTS profiles (
+    id TEXT PRIMARY KEY,
+    household_id TEXT REFERENCES households(id) ON DELETE SET NULL,
     full_name TEXT NOT NULL,
     nickname TEXT,
-    avatar_url TEXT,
-    role VARCHAR(20) NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member')),
-    phone_number TEXT,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    avatar_url TEXT DEFAULT 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&auto=format&fit=crop&q=80',
+    role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('admin', 'member', 'system_manager')),
+    is_system_manager INTEGER DEFAULT 0,
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
 -- 3. Bill Categories
-CREATE TABLE bill_categories (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    household_id UUID NOT NULL REFERENCES households(id) ON DELETE CASCADE,
-    name TEXT NOT NULL, -- e.g. 'Rent', 'Electricity', 'Water', 'Internet'
-    code VARCHAR(50) NOT NULL, -- 'rent', 'electricity', 'water', 'internet', 'gas', 'other'
+CREATE TABLE IF NOT EXISTS bill_categories (
+    id TEXT PRIMARY KEY,
+    household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    code TEXT NOT NULL,
     icon TEXT DEFAULT 'zap',
-    color_hex VARCHAR(7) DEFAULT '#3B82F6',
-    created_at TIMESTAMPTZ DEFAULT now()
+    color_hex TEXT DEFAULT '#10b981',
+    created_at TEXT DEFAULT (datetime('now'))
 );
 
--- 4. Category Default Split Rules
-CREATE TABLE category_split_rules (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    category_id UUID NOT NULL REFERENCES bill_categories(id) ON DELETE CASCADE,
-    profile_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    default_percentage NUMERIC(5, 2) NOT NULL CHECK (default_percentage >= 0 AND default_percentage <= 100),
-    created_at TIMESTAMPTZ DEFAULT now(),
+-- 4. Category Split Rules
+CREATE TABLE IF NOT EXISTS category_split_rules (
+    id TEXT PRIMARY KEY,
+    category_id TEXT NOT NULL REFERENCES bill_categories(id) ON DELETE CASCADE,
+    profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    default_percentage REAL NOT NULL CHECK (default_percentage >= 0 AND default_percentage <= 100),
+    created_at TEXT DEFAULT (datetime('now')),
     UNIQUE(category_id, profile_id)
 );
 
 -- 5. Bills
-CREATE TABLE bills (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    household_id UUID NOT NULL REFERENCES households(id) ON DELETE CASCADE,
-    category_id UUID NOT NULL REFERENCES bill_categories(id),
+CREATE TABLE IF NOT EXISTS bills (
+    id TEXT PRIMARY KEY,
+    household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    category_id TEXT NOT NULL REFERENCES bill_categories(id),
     provider_name TEXT NOT NULL,
     invoice_number TEXT,
-    total_amount NUMERIC(10, 2) NOT NULL CHECK (total_amount >= 0),
-    currency VARCHAR(3) NOT NULL DEFAULT 'EUR',
-    issue_date DATE,
-    due_date DATE NOT NULL,
-    period_start DATE,
-    period_end DATE,
-    file_path TEXT, -- Supabase Storage object path
-    file_type VARCHAR(50), -- 'application/pdf', 'image/jpeg', etc.
-    gemini_raw_output JSONB, -- Stored OCR extraction diagnostics
-    paid_to_provider BOOLEAN DEFAULT false,
-    paid_to_provider_at TIMESTAMPTZ,
-    created_by UUID REFERENCES profiles(id),
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
+    total_amount REAL NOT NULL CHECK (total_amount >= 0),
+    currency TEXT NOT NULL DEFAULT 'EUR',
+    issue_date TEXT,
+    due_date TEXT NOT NULL,
+    period_start TEXT,
+    period_end TEXT,
+    file_path TEXT,
+    file_type TEXT,
+    paid_to_provider INTEGER DEFAULT 0,
+    paid_to_provider_at TEXT,
+    created_by TEXT REFERENCES profiles(id) ON DELETE SET NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
 );
 
--- 6. Bill Splits (Individual roommate owed shares)
-CREATE TABLE bill_splits (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    bill_id UUID NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
-    profile_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    percentage NUMERIC(5, 2) NOT NULL CHECK (percentage >= 0 AND percentage <= 100),
-    amount_due NUMERIC(10, 2) NOT NULL CHECK (amount_due >= 0),
-    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid_to_admin', 'confirmed_by_admin')),
-    marked_paid_at TIMESTAMPTZ,
-    confirmed_paid_at TIMESTAMPTZ,
-    proof_file_path TEXT,
+-- 6. Bill Splits
+CREATE TABLE IF NOT EXISTS bill_splits (
+    id TEXT PRIMARY KEY,
+    bill_id TEXT NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
+    profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    amount REAL NOT NULL CHECK (amount >= 0),
+    percentage REAL NOT NULL CHECK (percentage >= 0 AND percentage <= 100),
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid_to_admin', 'confirmed_by_admin')),
+    paid_at TEXT,
+    confirmed_at TEXT,
     notes TEXT,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE(bill_id, profile_id)
+    created_at TEXT DEFAULT (datetime('now'))
 );
 
--- 7. Settlement Payments Log
-CREATE TABLE payments (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    household_id UUID NOT NULL REFERENCES households(id) ON DELETE CASCADE,
-    payer_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    receiver_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-    amount NUMERIC(10, 2) NOT NULL CHECK (amount > 0),
-    payment_method VARCHAR(50) DEFAULT 'bank_transfer', -- 'revolut', 'bank_transfer', 'cash', 'other'
-    proof_url TEXT,
-    status VARCHAR(20) NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'confirmed', 'rejected')),
+-- 7. Payments
+CREATE TABLE IF NOT EXISTS payments (
+    id TEXT PRIMARY KEY,
+    household_id TEXT NOT NULL REFERENCES households(id) ON DELETE CASCADE,
+    bill_id TEXT REFERENCES bills(id) ON DELETE SET NULL,
+    payer_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    receiver_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    amount REAL NOT NULL CHECK (amount > 0),
+    currency TEXT NOT NULL DEFAULT 'EUR',
+    payment_method TEXT NOT NULL,
     notes TEXT,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    confirmed_at TIMESTAMPTZ
+    confirmed INTEGER DEFAULT 0,
+    confirmed_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
 );
 ```
 
-### 6.3 Row Level Security (RLS) Policy Blueprint
-- **Profiles:** Users can read all profiles in their `household_id`. Users can update their own profile. Admins can update roommate roles and household memberships.
-- **Households:** Roommates can read household details. Only Admins can modify settings, payment details, or webhook URLs.
-- **Bills & Splits:** All members in a household can view bills and split allocations. Only Admins can insert/update/delete bills and split configurations. Members can update `marked_paid_at` on their own `bill_splits`. Only Admins can set `confirmed_by_admin`.
+### 6.3 Edge Authorization & Scope Policies
+Access control is enforced at the serverless edge via `functions/_auth.ts` middleware on all `/api/*` endpoints:
+- **System Manager:** Global access across all households and users (`is_system_manager = 1`). Can inspect households, delete households, and reassign roles.
+- **House Admin:** Scoped to `household_id`. Full CRUD on household bills, split rules, and payment confirmation.
+- **Roommate (Member):** Scoped to `household_id`. Can read household bills, mark personal splits as paid to admin, and view payment details. Cannot modify other roommates' shares or delete household assets.
 
 ---
 
@@ -353,33 +358,34 @@ HouseSplits adopts a clean, high-contrast, dark-first UI with warm accents, opti
 
 ## 9. Security & Privacy Architecture
 
-1. **Gemini API Key Protection:**
-   - The Gemini API key is stored securely in environment variables (server-side via Supabase Edge Function or Vite backend proxy). The client web app never exposes the Gemini API key in client-side bundles.
+1. **Authentication & Password Protection:**
+   - Passwords hashed using PBKDF2 with unique salts.
+   - Sessions issued as signed HMAC-SHA256 JWTs and delivered via `HttpOnly`, `Secure`, `SameSite=Lax` cookies with `Bearer` token fallback for non-cookie HTTP clients.
 2. **Encrypted Document Storage:**
-   - Bills and payment proofs are stored in a private Supabase Storage bucket with signed URLs expiring after 60 minutes for authenticated household members only.
+   - Invoices and payment proofs are stored in Cloudflare R2 bucket (`housesplits-storage`) via authenticated `/api/upload` endpoint.
 3. **Auditability:**
-   - All balance changes, overrides, and payment confirmations record `created_at` and `updated_at` with user IDs to avoid disputes between roommates.
+   - All balance changes, overrides, and payment confirmations record `created_at` and `updated_at` with user IDs in Cloudflare D1.
 
 ---
 
 ## 10. Implementation Phasing & Milestones
 
-- **Phase 1: Project Initialization & Supabase Setup**
+- **Phase 1: Project Initialization & Cloudflare Native Edge Setup**
   - Setup Vite + React 19 + TypeScript + Tailwind CSS project.
-  - Setup Supabase project, execute database DDL migrations, seed default categories.
-- **Phase 2: Authentication & Household Configuration**
-  - Roommate login & invite flow.
-  - Category split rules manager with 100% balance validation.
-  - Admin payment info configuration.
-- **Phase 3: Gemini Bill Scanner & Review Modal**
-  - Supabase Edge Function or backend endpoint for multi-modal Gemini 2.5 Flash parsing.
-  - File upload component (drag-and-drop / mobile camera capture).
-  - Split calculation engine with exact-cent remainder attribution.
-  - Review and confirm modal.
+  - Setup Cloudflare D1 SQL schema, indices, and seed categories.
+- **Phase 2: Authentication & Multi-Tenant Household Configuration**
+  - Native PBKDF2/JWT auth at edge.
+  - Roommate login & invite link system.
+  - Category split rules manager with dynamic 100% balance validation.
+  - System Manager Portal for platform-wide household & user management.
+- **Phase 3: Gemini Bill Scanner & Cent-Accurate Split Engine**
+  - Google Gemini 2.5 Flash multimodal document and photo OCR parsing.
+  - Cent-accurate split calculator eliminating rounding errors.
+  - Interactive Review & Confirmation Modal.
 - **Phase 4: Bill Ledger & Payment Settlement Flow**
   - Dashboard with summary metrics (Total monthly expenses, what is owed to Admin).
   - Roommate payment tracking ("Mark Paid to Admin" + Admin "Confirm Payment").
-  - Filterable Bills Ledger.
-- **Phase 5: Webhook Dispatcher & PWA Polish**
-  - Discord/Telegram webhook dispatch on new bill and payment confirmations.
-  - PWA manifest, offline cache icons, mobile responsive touch polish.
+  - Filterable Bills Ledger by month and category.
+- **Phase 5: Webhooks & PWA Polish**
+  - Discord webhook dispatch on new bill uploads and payment confirmations.
+  - PWA manifest, offline icons, mobile-first responsive touch interface.

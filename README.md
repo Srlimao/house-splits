@@ -26,7 +26,6 @@ graph TD
     R2["📦 Cloudflare R2 (Object Storage)"]
     Gemini["🤖 Google Gemini 2.5 Flash AI"]
     Discord["🔔 Discord / Chat Webhooks"]
-    Supabase["🛡️ Supabase PostgreSQL (Dual-Sync Fallback)"]
 
     Client -->|HTTPS / CNAME| EdgeDNS
     EdgeDNS --> PagesFunc
@@ -34,7 +33,6 @@ graph TD
     PagesFunc -->|Invoice PDFs / Receipts| R2
     Client -->|Multimodal OCR Scanning| Gemini
     Client -->|Settlement / Bill Alerts| Discord
-    PagesFunc -.->|Fallback Sync| Supabase
 ```
 
 ### 1. Frontend & Client
@@ -57,9 +55,10 @@ graph TD
 - **Capabilities:** Multimodal document scanning supporting Portuguese, Spanish, and English utility invoices (EDP, Endesa, Vodafone, MEO, etc.)
 - **Extraction:** Automatically parses Total Amount, Invoice Number, Billing Period, Due Date, and Provider Name
 
-### 4. Dual-Database Compatibility
-- **Primary:** Cloudflare D1 (`housesplits-db`)
-- **Secondary / Fallback:** Supabase PostgreSQL (`supabase/schema.sql`) for local development flexibility or external analytics
+### 4. Database & Storage Architecture
+- **Primary Relational Store:** Cloudflare D1 (`housesplits-db`) with optimized schema tables (`households`, `profiles`, `bill_categories`, `category_split_rules`, `bills`, `bill_splits`, `payments`)
+- **Document & Receipt Storage:** Cloudflare R2 bucket (`housesplits-storage`) accessed via `/api/upload`
+- **Zero External Database Dependencies:** Direct edge-to-database communication with zero latency hops to external DB providers
 
 ---
 
@@ -139,17 +138,15 @@ HouseSplits/
 │   │   └── HouseholdContext.tsx# Core React context & unified state engine
 │   ├── lib/
 │   │   ├── apiClient.ts        # Native Cloudflare API client
-│   │   ├── authService.ts      # Authentication coordinator (Cloudflare + Supabase)
+│   │   ├── authService.ts      # Authentication coordinator (Cloudflare Native JWT/Cookies)
 │   │   ├── gemini.ts           # Google Gemini 2.5 Flash SDK integration
-│   │   ├── supabase.ts         # Fallback client configuration
+│   │   ├── splitCalculator.ts  # Exact-cent allocation engine
 │   │   └── webhooks.ts         # Discord / chat webhook dispatchers
 │   ├── types/
 │   │   └── index.ts            # TypeScript domain models & interfaces
 │   ├── App.tsx                 # Root application routing & role guards
 │   ├── index.css               # Tailwind CSS & design tokens
 │   └── main.tsx                # React root entry point
-├── supabase/
-│   └── schema.sql              # PostgreSQL schema for Supabase fallback
 ├── package.json                # Dependencies & build scripts
 ├── tsconfig.json               # TypeScript configuration
 ├── vite.config.ts              # Vite & PWA build configuration
@@ -173,12 +170,8 @@ Create a `.env` file in the project root:
 # Google Gemini 2.5 Flash OCR
 VITE_GEMINI_API_KEY=your_gemini_api_key_here
 
-# Cloudflare D1 & Pages Token (for local deployments)
+# Cloudflare D1 & Pages Token (optional for local wrangler commands)
 CLOUDFLARE_API_TOKEN=your_cloudflare_api_token_here
-
-# Supabase (Optional fallback)
-VITE_SUPABASE_URL=https://your-project.supabase.co
-VITE_SUPABASE_ANON_KEY=your_anon_key_here
 ```
 
 ### 3. Run Development Server
