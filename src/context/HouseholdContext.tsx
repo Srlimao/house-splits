@@ -18,6 +18,7 @@ import {
 } from '../lib/initialData';
 import { notifyNewBill, notifyPaymentMade } from '../lib/webhooks';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { apiClient } from '../lib/apiClient';
 import { signOutUser, onAuthChange, getAuthSession } from '../lib/authService';
 
 interface HouseholdContextType {
@@ -39,7 +40,13 @@ interface HouseholdContextType {
   updateProfile: (id: string, updates: Partial<Profile>) => void;
   removeProfile: (id: string) => Promise<void>;
   regenerateInviteCode: () => string;
-  currentUser: { id: string; email: string } | null;
+  currentUser: {
+    id: string;
+    email: string;
+    role?: string;
+    isSystemManager?: boolean;
+    householdId?: string | null;
+  } | null;
   isAuthLoading: boolean;
   isSystemManager: boolean;
   logout: () => Promise<void>;
@@ -61,10 +68,19 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const [profiles, setProfiles] = useState<Profile[]>(() => {
     const saved = localStorage.getItem(LS_PROFILES_KEY);
     const parsed: Profile[] = saved ? JSON.parse(saved) : INITIAL_PROFILES;
-    const hasRealAdmin = parsed.some(
+    const filtered = parsed.filter((p) => p.role !== 'system_manager' && !p.isSystemManager);
+    const hasRealAdmin = filtered.some(
       (p) => p.role === 'admin' && p.email !== 'will@example.com' && p.id !== 'user-admin'
     );
-    return hasRealAdmin ? parsed.filter((p) => p.email !== 'will@example.com' && p.id !== 'user-admin') : parsed;
+    return hasRealAdmin
+      ? filtered.filter(
+          (p) =>
+            p.email !== 'will@example.com' &&
+            p.id !== 'user-admin' &&
+            p.id !== 'mate-1' &&
+            p.id !== 'mate-2'
+        )
+      : filtered;
   });
 
   const [categories] = useState<BillCategory[]>(INITIAL_CATEGORIES);
@@ -80,49 +96,69 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
 
   const [activeProfileId, setActiveProfileId] = useState<string>('user-admin');
-  const [currentUser, setCurrentUser] = useState<{ id: string; email: string } | null>(null);
+  const [currentUser, setCurrentUser] = useState<{
+    id: string;
+    email: string;
+    role?: string;
+    isSystemManager?: boolean;
+    householdId?: string | null;
+  } | null>(null);
   const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
 
-  // Supabase Auth session watcher
+  // Auth session watcher (runs once on mount)
   useEffect(() => {
+    let isMounted = true;
+
     getAuthSession()
       .then((session) => {
+        if (!isMounted) return;
         if (session?.user) {
-          setCurrentUser({ id: session.user.id, email: session.user.email || '' });
           const userEmail = session.user.email?.toLowerCase();
-          const found = profiles.find((p) => p.email.toLowerCase() === userEmail || p.id === session.user.id);
-          if (found) {
-            setActiveProfileId(found.id);
-          } else if (userEmail === 'w.back93@gmail.com') {
-            const adminP = profiles.find((p) => p.role === 'admin' || p.id === 'user-admin');
-            if (adminP) setActiveProfileId(adminP.id);
-          }
+          const isSys = Boolean(
+            session.user.isSystemManager ||
+            session.user.role === 'system_manager' ||
+            userEmail === 'manager@dunhas.com'
+          );
+          setCurrentUser({
+            id: session.user.id,
+            email: session.user.email || '',
+            role: isSys ? 'system_manager' : session.user.role,
+            isSystemManager: isSys,
+            householdId: isSys ? null : session.user.householdId,
+          });
         }
       })
       .finally(() => {
-        setIsAuthLoading(false);
+        if (isMounted) setIsAuthLoading(false);
       });
 
     const unsubscribe = onAuthChange((session) => {
+      if (!isMounted) return;
       if (session?.user) {
-        setCurrentUser({ id: session.user.id, email: session.user.email || '' });
         const userEmail = session.user.email?.toLowerCase();
-        const found = profiles.find((p) => p.email.toLowerCase() === userEmail || p.id === session.user.id);
-        if (found) {
-          setActiveProfileId(found.id);
-        } else if (userEmail === 'w.back93@gmail.com') {
-          const adminP = profiles.find((p) => p.role === 'admin' || p.id === 'user-admin');
-          if (adminP) setActiveProfileId(adminP.id);
-        }
+        const isSys = Boolean(
+          session.user.isSystemManager ||
+          session.user.role === 'system_manager' ||
+          userEmail === 'manager@dunhas.com'
+        );
+        setCurrentUser({
+          id: session.user.id,
+          email: session.user.email || '',
+          role: isSys ? 'system_manager' : session.user.role,
+          isSystemManager: isSys,
+          householdId: isSys ? null : session.user.householdId,
+        });
       } else {
         setCurrentUser(null);
       }
+      setIsAuthLoading(false);
     });
 
     return () => {
+      isMounted = false;
       unsubscribe();
     };
-  }, [profiles]);
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(LS_BILLS_KEY, JSON.stringify(bills));
@@ -140,100 +176,102 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.setItem(LS_PROFILES_KEY, JSON.stringify(profiles));
   }, [profiles]);
 
-  // Sync household data (and latest invite code) from Supabase on mount
+  // Sync household data from Cloudflare Native or Supabase
   useEffect(() => {
-    const client = supabase;
-    if (!client) return;
-
-    const syncFromSupabase = async () => {
+    const syncData = async () => {
       try {
-        const { data: dbHouse, error } = await client
-          .from('households')
-          .select('*')
-          .limit(1)
-          .maybeSingle();
+        let dbHouse: any = null;
+        let dbProfiles: any[] = [];
 
-        if (dbHouse && !error) {
+        // 1. Try native apiClient
+        try {
+          const houses = await apiClient.households.getAll();
+          if (houses && houses.length > 0) {
+            dbHouse = (currentUser?.householdId && houses.find((h: any) => h.id === currentUser.householdId)) || houses[0];
+            if (dbHouse?.id) {
+              dbProfiles = await apiClient.profiles.getAll(dbHouse.id);
+            }
+          }
+        } catch {
+          // Native API not available, fall back to Supabase
+        }
+
+        // 2. Fall back to Supabase if not loaded
+        if (!dbHouse && supabase) {
+          const { data, error } = await supabase
+            .from('households')
+            .select('*')
+            .limit(1)
+            .maybeSingle();
+
+          if (data && !error) {
+            dbHouse = data;
+            const { data: sProfs } = await supabase
+              .from('profiles')
+              .select('*')
+              .eq('household_id', dbHouse.id);
+            dbProfiles = sProfs || [];
+          }
+        }
+
+        if (dbHouse) {
           setHousehold((prev) => ({
             ...prev,
             id: dbHouse.id,
             name: dbHouse.name || prev.name,
             currency: dbHouse.currency || prev.currency,
-            inviteCode: dbHouse.invite_code || prev.inviteCode || 'MAPLE-2026',
-            adminPaymentInfo: dbHouse.admin_payment_info || prev.adminPaymentInfo,
-            webhookSettings: dbHouse.webhook_settings || prev.webhookSettings,
+            inviteCode: dbHouse.invite_code || dbHouse.inviteCode || prev.inviteCode || 'MAPLE-2026',
+            adminPaymentInfo: dbHouse.admin_payment_info || dbHouse.adminPaymentInfo || prev.adminPaymentInfo,
+            webhookSettings: dbHouse.webhook_settings || dbHouse.webhookSettings || prev.webhookSettings,
           }));
 
-          // Fetch profiles from Supabase
-          const { data: dbProfiles } = await client
-            .from('profiles')
-            .select('*');
-
           if (dbProfiles && dbProfiles.length > 0) {
-            setProfiles((prev) => {
-              let updated = [...prev];
-              for (const dbP of dbProfiles) {
-                const idx = updated.findIndex(
-                  (p) => p.email.toLowerCase() === dbP.email?.toLowerCase() || p.id === dbP.id
-                );
-                if (idx >= 0) {
-                  updated[idx] = {
-                    ...updated[idx],
-                    id: dbP.id,
-                    fullName: dbP.full_name || updated[idx].fullName,
-                    role: (dbP.role as UserRole) || updated[idx].role,
-                    isSystemManager: dbP.is_system_manager ?? (dbP.role === 'system_manager'),
-                    email: dbP.email || updated[idx].email,
-                  };
-                } else {
-                  updated.push({
-                    id: dbP.id,
-                    householdId: dbP.household_id,
-                    fullName: dbP.full_name,
-                    email: dbP.email,
-                    role: (dbP.role as UserRole) || 'member',
-                    isSystemManager: dbP.is_system_manager ?? (dbP.role === 'system_manager'),
-                    avatarUrl: dbP.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&auto=format&fit=crop&q=80',
-                    isActive: dbP.is_active ?? true,
-                  });
-                }
-              }
+            const mappedProfiles: Profile[] = dbProfiles
+              .filter((dbP) => {
+                const role = dbP.role as UserRole;
+                const isSys = Boolean(dbP.is_system_manager ?? dbP.isSystemManager ?? role === 'system_manager');
+                return !isSys && role !== 'system_manager';
+              })
+              .map((dbP) => ({
+                id: dbP.id,
+                householdId: dbP.household_id || dbP.householdId || dbHouse.id,
+                fullName: dbP.full_name || dbP.fullName || 'Roommate',
+                nickname: dbP.nickname,
+                email: dbP.email,
+                role: (dbP.role as UserRole) || 'member',
+                isSystemManager: false,
+                avatarUrl: dbP.avatar_url || dbP.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&auto=format&fit=crop&q=80',
+                isActive: dbP.is_active ?? dbP.isActive ?? true,
+              }));
 
-              // Hide mock system admin (will@example.com / user-admin) if a real admin exists
-              const realAdmin = updated.find(
-                (p) => p.role === 'admin' && p.email !== 'will@example.com' && p.id !== 'user-admin'
+            setProfiles(mappedProfiles);
+
+            const realAdmin = mappedProfiles.find((p) => p.role === 'admin');
+            if (realAdmin) {
+              setSplitRules((prevRules) =>
+                prevRules.map((r) => (r.profileId === 'user-admin' ? { ...r, profileId: realAdmin.id } : r))
               );
-              if (realAdmin) {
-                updated = updated.filter((p) => p.email !== 'will@example.com' && p.id !== 'user-admin');
-
-                // Remap legacy bills/splits/rules from user-admin to realAdmin.id
-                setSplitRules((prevRules) =>
-                  prevRules.map((r) => (r.profileId === 'user-admin' ? { ...r, profileId: realAdmin.id } : r))
-                );
-                setBills((prevBills) =>
-                  prevBills.map((b) => ({
-                    ...b,
-                    createdBy: b.createdBy === 'user-admin' ? realAdmin.id : b.createdBy,
-                    splits: b.splits.map((s) => (s.profileId === 'user-admin' ? { ...s, profileId: realAdmin.id } : s)),
-                  }))
-                );
-              }
-
-              return updated;
-            });
+              setBills((prevBills) =>
+                prevBills.map((b) => ({
+                  ...b,
+                  createdBy: b.createdBy === 'user-admin' ? realAdmin.id : b.createdBy,
+                  splits: b.splits.map((s) => (s.profileId === 'user-admin' ? { ...s, profileId: realAdmin.id } : s)),
+                }))
+              );
+            }
           }
         }
       } catch (e) {
-        console.error('Error fetching household from Supabase:', e);
+        console.error('Error fetching household data:', e);
       }
     };
 
-    syncFromSupabase();
-  }, []);
+    syncData();
+  }, [currentUser?.householdId]);
 
   // Keep activeProfileId in sync with current logged-in user or active admin
   useEffect(() => {
-    if (currentUser && profiles.length > 0) {
+    if (currentUser && profiles.length > 0 && !currentUser.isSystemManager) {
       const match = profiles.find(
         (p) => p.email.toLowerCase() === currentUser.email.toLowerCase() || p.id === currentUser.id
       );
@@ -246,18 +284,28 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const isSystemManager = Boolean(
     currentUser &&
     (currentUser.email?.toLowerCase() === 'manager@dunhas.com' ||
-      profiles.some(
-        (p) =>
-          (p.email.toLowerCase() === currentUser.email?.toLowerCase() || p.id === currentUser.id) &&
-          (p.role === 'system_manager' || p.isSystemManager)
-      ))
+      currentUser.role === 'system_manager' ||
+      currentUser.isSystemManager)
   );
 
-  const activeProfile =
-    profiles.find((p) => p.id === activeProfileId) ||
-    profiles.find((p) => currentUser && (p.email.toLowerCase() === currentUser.email.toLowerCase() || p.id === currentUser.id)) ||
-    profiles.find((p) => p.role === 'admin') ||
-    profiles[0];
+  const managerProfile: Profile = {
+    id: currentUser?.id || 'sys-manager',
+    householdId: '',
+    fullName: currentUser?.email === 'manager@dunhas.com' ? 'System Manager' : 'Admin',
+    email: currentUser?.email || 'manager@dunhas.com',
+    role: 'system_manager',
+    isSystemManager: true,
+    avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&auto=format&fit=crop&q=80',
+    isActive: true,
+  };
+
+  const activeProfile = isSystemManager
+    ? managerProfile
+    : profiles.find((p) => p.id === activeProfileId) ||
+      profiles.find((p) => currentUser && (p.email.toLowerCase() === currentUser.email.toLowerCase() || p.id === currentUser.id)) ||
+      profiles.find((p) => p.role === 'admin') ||
+      profiles[0] ||
+      managerProfile;
 
   const addBill = async (billData: Omit<Bill, 'id' | 'createdAt'>): Promise<Bill> => {
     const newBill: Bill = {
@@ -403,14 +451,40 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const addProfile = (newMember: Omit<Profile, 'id' | 'householdId'>): Profile => {
+    const newId = crypto.randomUUID();
     const profile: Profile = {
       ...newMember,
-      id: `mate-${Date.now()}`,
+      id: newId,
       householdId: household.id,
       isActive: true,
     };
 
     setProfiles((prev) => [...prev, profile]);
+
+    // Persist to Cloudflare Native D1 via API
+    apiClient.profiles
+      .create({
+        id: newId,
+        household_id: household.id,
+        full_name: newMember.fullName,
+        email: newMember.email,
+        role: newMember.role || 'member',
+        avatar_url: newMember.avatarUrl,
+      })
+      .catch((err) => console.warn('Could not persist profile to D1:', err));
+
+    // Best-effort Supabase
+    if (supabase) {
+      supabase.from('profiles').insert({
+        id: newId,
+        household_id: household.id,
+        full_name: newMember.fullName,
+        email: newMember.email,
+        role: newMember.role || 'member',
+        avatar_url: newMember.avatarUrl,
+        is_active: true,
+      }).then();
+    }
 
     // Add default split rules for this new roommate across all existing categories
     setSplitRules((prev) => {
@@ -418,7 +492,7 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         id: `r-${cat.id}-${profile.id}-${Date.now()}`,
         categoryId: cat.id,
         profileId: profile.id,
-        defaultPercentage: 0, // Admin can configure percentage in Split Rules
+        defaultPercentage: 0,
       }));
       return [...prev, ...newRules];
     });
@@ -428,6 +502,7 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const updateProfile = (id: string, updates: Partial<Profile>) => {
     setProfiles((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
+    apiClient.profiles.update(id, updates).catch(() => {});
   };
 
   const removeProfile = async (id: string) => {
@@ -446,14 +521,19 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setActiveProfileId(nextAdmin ? nextAdmin.id : nextProfiles[0]?.id || '');
     }
 
+    // 1. Delete from Cloudflare Native D1 via API
+    try {
+      await apiClient.profiles.delete(id);
+    } catch (err) {
+      console.warn('apiClient delete error:', err);
+    }
+
+    // 2. Best-effort Supabase delete
     if (supabase) {
       try {
-        const { error } = await supabase.from('profiles').delete().eq('id', id);
-        if (error) {
-          console.error('Error deleting profile from Supabase:', error);
-        }
+        await supabase.from('profiles').delete().eq('id', id);
       } catch (err) {
-        console.error('Exception deleting profile from Supabase:', err);
+        console.warn('Supabase delete error:', err);
       }
     }
   };

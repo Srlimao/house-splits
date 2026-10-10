@@ -7,9 +7,9 @@ import {
   Check,
   Loader2,
   AlertTriangle,
-  UserCheck,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { apiClient } from '../../lib/apiClient';
 import { DbHousehold } from './HouseholdManagerSection';
 import { UserRole } from '../../types';
 
@@ -53,18 +53,31 @@ export const UserManagerSection: React.FC<UserManagerSectionProps> = ({
   const handleRoleChange = async (profileId: string, newRole: UserRole) => {
     setUpdatingId(profileId);
     setError(null);
-    const client = supabase;
-    if (!client) return;
 
     try {
       const isSys = newRole === 'system_manager';
-      const { error: updErr } = await client
-        .from('profiles')
-        .update({ role: newRole, is_system_manager: isSys })
-        .eq('id', profileId);
+      const updates: any = { role: newRole, is_system_manager: isSys };
+      if (isSys) {
+        updates.household_id = null;
+      }
 
-      if (updErr) throw updErr;
-      showNotification(`Updated role to ${newRole}`);
+      // Sync to Cloudflare D1
+      try {
+        await apiClient.profiles.update(profileId, updates);
+      } catch {
+        // Continue if falling back to Supabase
+      }
+
+      // Sync to Supabase
+      if (supabase) {
+        const { error: updErr } = await supabase
+          .from('profiles')
+          .update(updates)
+          .eq('id', profileId);
+        if (updErr) throw updErr;
+      }
+
+      showNotification(`Updated role to ${newRole}${isSys ? ' (unbound from household)' : ''}`);
       onRefresh();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to update role';
@@ -75,19 +88,33 @@ export const UserManagerSection: React.FC<UserManagerSectionProps> = ({
   };
 
   const handleHouseholdChange = async (profileId: string, newHouseId: string) => {
+    const targetUser = profiles.find((p) => p.id === profileId);
+    if (targetUser?.role === 'system_manager' || targetUser?.is_system_manager) {
+      setError('System managers are global and cannot be bound to any household.');
+      return;
+    }
+
     setUpdatingId(profileId);
     setError(null);
-    const client = supabase;
-    if (!client) return;
 
     try {
       const targetHouseId = newHouseId === 'none' ? null : newHouseId;
-      const { error: updErr } = await client
-        .from('profiles')
-        .update({ household_id: targetHouseId })
-        .eq('id', profileId);
+      const updates = { household_id: targetHouseId };
 
-      if (updErr) throw updErr;
+      try {
+        await apiClient.profiles.update(profileId, updates);
+      } catch {
+        // continue
+      }
+
+      if (supabase) {
+        const { error: updErr } = await supabase
+          .from('profiles')
+          .update(updates)
+          .eq('id', profileId);
+        if (updErr) throw updErr;
+      }
+
       showNotification('Household reassigned');
       onRefresh();
     } catch (err: unknown) {
@@ -110,12 +137,18 @@ export const UserManagerSection: React.FC<UserManagerSectionProps> = ({
 
     setDeletingId(p.id);
     setError(null);
-    const client = supabase;
-    if (!client) return;
 
     try {
-      const { error: delErr } = await client.from('profiles').delete().eq('id', p.id);
-      if (delErr) throw delErr;
+      await apiClient.profiles.delete(p.id);
+
+      if (supabase) {
+        try {
+          await supabase.from('profiles').delete().eq('id', p.id);
+        } catch {
+          // ignore Supabase RLS error when running under native Cloudflare auth
+        }
+      }
+
       showNotification(`Removed user ${p.full_name}`);
       onRefresh();
     } catch (err: unknown) {
@@ -136,12 +169,6 @@ export const UserManagerSection: React.FC<UserManagerSectionProps> = ({
       p.household_id === selectedHouseFilter;
     return matchesSearch && matchesHouse;
   });
-
-  const getHouseholdName = (houseId: string | null) => {
-    if (!houseId) return 'Unassigned / None';
-    const h = households.find((item) => item.id === houseId);
-    return h ? h.name : 'Unknown House';
-  };
 
   return (
     <div className="space-y-4">
@@ -178,7 +205,7 @@ export const UserManagerSection: React.FC<UserManagerSectionProps> = ({
           className="w-full sm:w-auto px-3 py-2 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs focus:outline-none focus:border-amber-500"
         >
           <option value="all">All Households ({households.length})</option>
-          <option value="none">Unassigned Users</option>
+          <option value="none">Unassigned / Global</option>
           {households.map((h) => (
             <option key={h.id} value={h.id}>
               {h.name}
@@ -211,6 +238,7 @@ export const UserManagerSection: React.FC<UserManagerSectionProps> = ({
                   const isUpdating = updatingId === p.id;
                   const isDeleting = deletingId === p.id;
                   const isSelf = p.id === currentUserId;
+                  const isSysManager = p.role === 'system_manager' || p.is_system_manager;
 
                   return (
                     <tr key={p.id} className="hover:bg-zinc-800/30 transition-colors">
@@ -236,19 +264,26 @@ export const UserManagerSection: React.FC<UserManagerSectionProps> = ({
                       </td>
 
                       <td className="py-3 px-4">
-                        <select
-                          value={p.household_id || 'none'}
-                          onChange={(e) => handleHouseholdChange(p.id, e.target.value)}
-                          disabled={isUpdating}
-                          className="px-2.5 py-1 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-300 text-xs focus:outline-none focus:border-amber-500"
-                        >
-                          <option value="none">-- Unassigned --</option>
-                          {households.map((h) => (
-                            <option key={h.id} value={h.id}>
-                              {h.name}
-                            </option>
-                          ))}
-                        </select>
+                        {isSysManager ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/10 border border-amber-500/20 text-amber-400 font-semibold text-[11px]">
+                            <Shield className="w-3 h-3" />
+                            Global (Not bound to household)
+                          </span>
+                        ) : (
+                          <select
+                            value={p.household_id || 'none'}
+                            onChange={(e) => handleHouseholdChange(p.id, e.target.value)}
+                            disabled={isUpdating}
+                            className="px-2.5 py-1 rounded-lg bg-zinc-950 border border-zinc-800 text-zinc-300 text-xs focus:outline-none focus:border-amber-500"
+                          >
+                            <option value="none">-- Unassigned --</option>
+                            {households.map((h) => (
+                              <option key={h.id} value={h.id}>
+                                {h.name}
+                              </option>
+                            ))}
+                          </select>
+                        )}
                       </td>
 
                       <td className="py-3 px-4">
@@ -258,7 +293,7 @@ export const UserManagerSection: React.FC<UserManagerSectionProps> = ({
                             onChange={(e) => handleRoleChange(p.id, e.target.value as UserRole)}
                             disabled={isUpdating || isSelf}
                             className={`px-2.5 py-1 rounded-lg border text-xs font-semibold capitalize focus:outline-none ${
-                              p.role === 'system_manager'
+                              isSysManager
                                 ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
                                 : p.role === 'admin'
                                 ? 'bg-brand-500/10 border-brand-500/30 text-brand-400'

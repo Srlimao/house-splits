@@ -11,20 +11,33 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
     if (!env.DB) return new Response(JSON.stringify({ error: 'DB not available' }), { status: 500 });
 
     if (body.role !== undefined) {
-      const isSys = body.role === 'system_manager' ? 1 : 0;
-      await env.DB.prepare(
-        'UPDATE profiles SET role = ?, is_system_manager = ?, updated_at = datetime("now") WHERE id = ?'
-      )
-        .bind(body.role, isSys, profileId)
-        .run();
+      const isSys = body.role === 'system_manager';
+      if (isSys) {
+        await env.DB.prepare(
+          'UPDATE profiles SET role = ?, is_system_manager = 1, household_id = NULL, updated_at = datetime("now") WHERE id = ?'
+        )
+          .bind(body.role, profileId)
+          .run();
+      } else {
+        await env.DB.prepare(
+          'UPDATE profiles SET role = ?, is_system_manager = 0, updated_at = datetime("now") WHERE id = ?'
+        )
+          .bind(body.role, profileId)
+          .run();
+      }
     }
 
     if (body.household_id !== undefined) {
-      await env.DB.prepare(
-        'UPDATE profiles SET household_id = ?, updated_at = datetime("now") WHERE id = ?'
-      )
-        .bind(body.household_id, profileId)
-        .run();
+      const targetHouse = body.household_id === 'none' ? null : body.household_id;
+      // Do not allow setting household_id if current user is system_manager
+      const current = await env.DB.prepare('SELECT role FROM profiles WHERE id = ?').bind(profileId).first<{ role: string }>();
+      if (current?.role !== 'system_manager') {
+        await env.DB.prepare(
+          'UPDATE profiles SET household_id = ?, updated_at = datetime("now") WHERE id = ?'
+        )
+          .bind(targetHouse, profileId)
+          .run();
+      }
     }
 
     if (body.full_name !== undefined) {

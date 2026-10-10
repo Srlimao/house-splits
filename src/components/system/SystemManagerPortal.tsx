@@ -12,6 +12,7 @@ import {
   ArrowLeft,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { apiClient } from '../../lib/apiClient';
 import { useHousehold } from '../../context/HouseholdContext';
 import { HouseholdManagerSection, DbHousehold } from './HouseholdManagerSection';
 import { UserManagerSection, DbProfile } from './UserManagerSection';
@@ -33,26 +34,43 @@ export const SystemManagerPortal: React.FC<SystemManagerPortalProps> = ({
   const [selectedHouseId, setSelectedHouseId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
-    const client = supabase;
-    if (!client) {
-      setLoading(false);
-      return;
-    }
-
     setLoading(true);
     try {
-      const [hRes, pRes] = await Promise.all([
-        client.from('households').select('*').order('created_at', { ascending: false }),
-        client.from('profiles').select('*').order('created_at', { ascending: false }),
-      ]);
+      let fetchedHouseholds: DbHousehold[] = [];
+      let fetchedProfiles: DbProfile[] = [];
 
-      const fetchedHouseholds: DbHousehold[] = hRes.data || [];
-      const fetchedProfiles: DbProfile[] = pRes.data || [];
+      try {
+        const [hData, pData] = await Promise.all([
+          apiClient.households.getAll(),
+          apiClient.profiles.getAll(),
+        ]);
+        fetchedHouseholds = hData;
+        fetchedProfiles = pData.map((p: any) => ({
+          id: p.id,
+          household_id: p.householdId ?? p.household_id ?? null,
+          full_name: p.fullName || p.full_name || 'User',
+          email: p.email || '',
+          role: p.role || 'member',
+          is_system_manager: Boolean(p.isSystemManager ?? p.is_system_manager),
+          avatar_url: p.avatarUrl || p.avatar_url,
+          is_active: p.isActive ?? p.is_active ?? true,
+          created_at: p.createdAt || p.created_at,
+        }));
+      } catch {
+        if (supabase) {
+          const [hRes, pRes] = await Promise.all([
+            supabase.from('households').select('*').order('created_at', { ascending: false }),
+            supabase.from('profiles').select('*').order('created_at', { ascending: false }),
+          ]);
+          fetchedHouseholds = hRes.data || [];
+          fetchedProfiles = pRes.data || [];
+        }
+      }
 
-      // Calculate member counts per household
+      // Calculate member counts per household (EXCLUDING system managers)
       const countMap: Record<string, number> = {};
       fetchedProfiles.forEach((p) => {
-        if (p.household_id) {
+        if (p.household_id && p.role !== 'system_manager' && !p.is_system_manager) {
           countMap[p.household_id] = (countMap[p.household_id] || 0) + 1;
         }
       });

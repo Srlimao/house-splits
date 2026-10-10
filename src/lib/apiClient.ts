@@ -20,6 +20,9 @@ export const apiClient = {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');
+      if (data.token) {
+        localStorage.setItem('housesplits_token', data.token);
+      }
       return data;
     },
 
@@ -31,12 +34,20 @@ export const apiClient = {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Sign up failed');
+      if (data.token) {
+        localStorage.setItem('housesplits_token', data.token);
+      }
       return data;
     },
 
     async getSession(): Promise<UserSession | null> {
       try {
-        const res = await fetch('/api/auth/session');
+        const token = localStorage.getItem('housesplits_token');
+        const headers: Record<string, string> = {};
+        if (token) {
+          headers['Authorization'] = `Bearer ${token}`;
+        }
+        const res = await fetch('/api/auth/session', { headers });
         if (!res.ok) return null;
         const data = await res.json();
         return data.user || null;
@@ -46,6 +57,7 @@ export const apiClient = {
     },
 
     async logout(): Promise<void> {
+      localStorage.removeItem('housesplits_token');
       try {
         await fetch('/api/auth/logout', { method: 'POST' });
       } catch {
@@ -92,6 +104,16 @@ export const apiClient = {
       const url = householdId ? `/api/profiles?household_id=${householdId}` : '/api/profiles';
       const res = await fetch(url);
       if (!res.ok) throw new Error('Failed to load profiles');
+      return res.json();
+    },
+
+    async create(data: any): Promise<any> {
+      const res = await fetch('/api/profiles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Failed to create profile');
       return res.json();
     },
 

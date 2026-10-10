@@ -14,11 +14,16 @@ export const signInWithEmailPassword = async (email: string, password: string): 
   try {
     const res = await apiClient.auth.login(email, password);
     if (res?.user) {
-      return {
+      const userPayload = {
         id: res.user.id,
         email: res.user.email,
+        role: res.user.role,
+        isSystemManager: res.user.isSystemManager,
+        householdId: res.user.householdId,
         user_metadata: { full_name: res.user.fullName },
       };
+      window.dispatchEvent(new CustomEvent('housesplits_auth_change', { detail: { user: userPayload } }));
+      return userPayload;
     }
   } catch (apiErr: any) {
     // If running with Supabase as fallback
@@ -45,11 +50,16 @@ export const signUpWithEmailPassword = async (
   try {
     const res = await apiClient.auth.signup(fullName, email, password, inviteCodeOrHouseholdId);
     if (res?.user) {
-      return {
+      const userPayload = {
         id: res.user.id,
         email: res.user.email,
+        role: res.user.role,
+        isSystemManager: res.user.isSystemManager,
+        householdId: res.user.householdId,
         user_metadata: { full_name: res.user.fullName },
       };
+      window.dispatchEvent(new CustomEvent('housesplits_auth_change', { detail: { user: userPayload } }));
+      return userPayload;
     }
   } catch (apiErr: any) {
     if (supabase) {
@@ -73,6 +83,7 @@ export const signUpWithEmailPassword = async (
 
 export const signOutUser = async (): Promise<void> => {
   await apiClient.auth.logout();
+  window.dispatchEvent(new CustomEvent('housesplits_auth_change', { detail: null }));
   if (supabase) {
     await supabase.auth.signOut();
   }
@@ -87,6 +98,9 @@ export const getAuthSession = async (): Promise<any> => {
         user: {
           id: user.id,
           email: user.email,
+          role: user.role,
+          isSystemManager: user.isSystemManager,
+          householdId: user.householdId,
           user_metadata: { full_name: user.fullName },
         },
       };
@@ -95,8 +109,8 @@ export const getAuthSession = async (): Promise<any> => {
     // ignore
   }
 
-  // 2. Fallback to Supabase session if configured
-  if (supabase) {
+  // 2. Fallback to Supabase session if configured and no native token exists
+  if (!localStorage.getItem('housesplits_token') && supabase) {
     const { data, error } = await supabase.auth.getSession();
     if (!error && data.session) return data.session;
   }
@@ -104,11 +118,25 @@ export const getAuthSession = async (): Promise<any> => {
 };
 
 export const onAuthChange = (callback: (session: any) => void) => {
+  const customHandler = (e: any) => {
+    callback(e.detail);
+  };
+  window.addEventListener('housesplits_auth_change', customHandler);
+
+  let sub: any = null;
   if (supabase) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      // If a native session token exists, do NOT allow Supabase null session to overwrite it
+      if (!session && localStorage.getItem('housesplits_token')) {
+        return;
+      }
       callback(session);
     });
-    return () => subscription.unsubscribe();
+    sub = subscription;
   }
-  return () => {};
+
+  return () => {
+    window.removeEventListener('housesplits_auth_change', customHandler);
+    if (sub) sub.unsubscribe();
+  };
 };
