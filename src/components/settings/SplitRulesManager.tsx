@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useHousehold } from '../../context/HouseholdContext';
 import { SlidersHorizontal, Check, RefreshCw, AlertCircle } from 'lucide-react';
 import confetti from 'canvas-confetti';
@@ -17,19 +17,35 @@ export const SplitRulesManager: React.FC = () => {
     const map: Record<string, number> = {};
     profiles.forEach((p) => {
       const existing = currentRules.find((r) => r.profileId === p.id);
-      map[p.id] = existing ? existing.defaultPercentage : Number((100 / profiles.length).toFixed(2));
+      map[p.id] = existing ? existing.defaultPercentage : Number((100 / Math.max(1, profiles.length)).toFixed(1));
     });
     return map;
   });
 
-  // Keep in sync when category changes
+  // Keep in sync when category, profiles, or split rules update
+  useEffect(() => {
+    if (profiles.length === 0) return;
+    const catRules = splitRules.filter((r) => r.categoryId === selectedCatId);
+    const map: Record<string, number> = {};
+    const equalVal = Number((100 / profiles.length).toFixed(1));
+
+    profiles.forEach((p) => {
+      const existing = catRules.find((r) => r.profileId === p.id);
+      map[p.id] = existing ? existing.defaultPercentage : equalVal;
+    });
+    setPercentages(map);
+  }, [profiles, selectedCatId, splitRules]);
+
+  // Keep in sync when category tab changes
   const handleCategoryChange = (catId: string) => {
     setSelectedCatId(catId);
     const catRules = splitRules.filter((r) => r.categoryId === catId);
     const map: Record<string, number> = {};
+    const equalVal = Number((100 / Math.max(1, profiles.length)).toFixed(1));
+
     profiles.forEach((p) => {
       const existing = catRules.find((r) => r.profileId === p.id);
-      map[p.id] = existing ? existing.defaultPercentage : Number((100 / profiles.length).toFixed(2));
+      map[p.id] = existing ? existing.defaultPercentage : equalVal;
     });
     setPercentages(map);
     setSaveSuccess(false);
@@ -41,26 +57,35 @@ export const SplitRulesManager: React.FC = () => {
   };
 
   const setEqualSplit = () => {
-    const equalVal = Number((100 / profiles.length).toFixed(2));
-    const remainder = Number((100 - equalVal * profiles.length).toFixed(2));
+    if (profiles.length === 0) return;
+    const basePct = Math.floor((100 / profiles.length) * 10) / 10;
+    const remainder = Number((100 - basePct * profiles.length).toFixed(1));
     const map: Record<string, number> = {};
     profiles.forEach((p, idx) => {
-      map[p.id] = idx === 0 ? Number((equalVal + remainder).toFixed(2)) : equalVal;
+      map[p.id] = idx === 0 ? Number((basePct + remainder).toFixed(1)) : basePct;
     });
     setPercentages(map);
     setSaveSuccess(false);
   };
 
   const setRentPreset = () => {
-    // 50% Will, 25% Alex, 25% Sam
+    if (profiles.length === 0) return;
     const map: Record<string, number> = {};
-    profiles.forEach((p) => {
-      if (p.role === 'admin' || p.id === 'user-admin') {
+    if (profiles.length === 2) {
+      profiles.forEach((p) => {
         map[p.id] = 50.0;
-      } else {
-        map[p.id] = 25.0;
-      }
-    });
+      });
+    } else {
+      const nonAdminCount = profiles.length - 1;
+      const otherShare = nonAdminCount > 0 ? Number((50 / nonAdminCount).toFixed(1)) : 0;
+      profiles.forEach((p) => {
+        if (p.role === 'admin') {
+          map[p.id] = 50.0;
+        } else {
+          map[p.id] = otherShare;
+        }
+      });
+    }
     setPercentages(map);
     setSaveSuccess(false);
   };
@@ -118,27 +143,50 @@ export const SplitRulesManager: React.FC = () => {
           onClick={setEqualSplit}
           className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium border border-zinc-700/60 transition-colors"
         >
-          Equal 3-Way Split (33.3% each)
+          Equal Split ({profiles.length > 0 ? (100 / profiles.length).toFixed(1) : '50'}% each)
         </button>
-        <button
-          onClick={setRentPreset}
-          className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium border border-zinc-700/60 transition-colors"
-        >
-          Rent Split (50% Admin, 25% Couple each)
-        </button>
+        {profiles.length > 2 && (
+          <button
+            onClick={setRentPreset}
+            className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium border border-zinc-700/60 transition-colors"
+          >
+            Rent Split (50% Admin, equal rest)
+          </button>
+        )}
       </div>
 
       {/* Sliders & Percentage Inputs */}
       <div className="space-y-3 bg-zinc-950/60 p-4 rounded-xl border border-zinc-800/80">
         {profiles.map((p) => {
           const val = percentages[p.id] ?? 0;
+          const displayName = p.fullName || p.email?.split('@')[0] || 'Roommate';
+          const initial = displayName.charAt(0).toUpperCase();
+
           return (
             <div key={p.id} className="space-y-1.5">
               <div className="flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2">
-                  <img src={p.avatarUrl} alt={p.fullName} className="w-5 h-5 rounded-full object-cover" />
+                  {p.avatarUrl ? (
+                    <img
+                      src={p.avatarUrl}
+                      alt={displayName}
+                      className="w-5 h-5 rounded-full object-cover shrink-0"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLElement).style.display = 'none';
+                        const next = (e.currentTarget as HTMLElement).nextElementSibling;
+                        if (next) (next as HTMLElement).classList.remove('hidden');
+                      }}
+                    />
+                  ) : null}
+                  <div
+                    className={`w-5 h-5 rounded-full bg-brand-500/20 text-brand-400 font-bold text-[10px] items-center justify-center shrink-0 ${
+                      p.avatarUrl ? 'hidden' : 'flex'
+                    }`}
+                  >
+                    {initial}
+                  </div>
                   <span className="font-semibold text-zinc-200">
-                    {p.fullName} {p.role === 'admin' ? '(Admin)' : ''}
+                    {displayName} {p.role === 'admin' ? '(Admin)' : ''}
                   </span>
                 </div>
                 <div className="flex items-center gap-1">

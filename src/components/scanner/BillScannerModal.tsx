@@ -47,16 +47,29 @@ export const BillScannerModal: React.FC<BillScannerModalProps> = ({ isOpen, onCl
   // Per-roommate split shares (percentages)
   const [customShares, setCustomShares] = useState<{ profileId: string; percentage: number }[]>([]);
 
-  // Initialize shares when category changes
+  // Initialize shares when category or profiles changes
   useEffect(() => {
-    if (!categoryId) return;
-    const catRules = splitRules.filter((r) => r.categoryId === categoryId);
+    if (!categoryId || profiles.length === 0) return;
 
-    if (catRules.length > 0) {
-      setCustomShares(catRules.map((r) => ({ profileId: r.profileId, percentage: r.defaultPercentage })));
+    const activeProfileIds = new Set(profiles.map((p) => p.id));
+    const validCatRules = splitRules.filter(
+      (r) => r.categoryId === categoryId && activeProfileIds.has(r.profileId)
+    );
+
+    // If valid rules exist for every active roommate in the household
+    if (validCatRules.length === profiles.length) {
+      setCustomShares(
+        validCatRules.map((r) => ({ profileId: r.profileId, percentage: r.defaultPercentage }))
+      );
     } else {
-      const equalPct = Number((100 / profiles.length).toFixed(2));
-      setCustomShares(profiles.map((p) => ({ profileId: p.id, percentage: equalPct })));
+      // Default to equal split across all active roommates
+      const basePct = Math.floor((100 / profiles.length) * 10) / 10;
+      const remainder = Number((100 - basePct * profiles.length).toFixed(1));
+      const shares = profiles.map((p, idx) => ({
+        profileId: p.id,
+        percentage: idx === 0 ? Number((basePct + remainder).toFixed(1)) : basePct,
+      }));
+      setCustomShares(shares);
     }
   }, [categoryId, splitRules, profiles]);
 
@@ -373,43 +386,63 @@ export const BillScannerModal: React.FC<BillScannerModalProps> = ({ isOpen, onCl
               </div>
 
               <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                {calculatedShares.map((share) => {
-                  const profile = profiles.find((p) => p.id === share.profileId);
-                  return (
-                    <div
-                      key={share.profileId}
-                      className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80 text-xs"
-                    >
-                      <div className="flex items-center gap-2">
-                        <img
-                          src={profile?.avatarUrl}
-                          alt={profile?.fullName}
-                          className="w-6 h-6 rounded-full object-cover"
-                        />
-                        <span className="font-medium text-zinc-200">
-                          {profile?.fullName} {profile?.role === 'admin' ? '(Admin)' : ''}
-                        </span>
-                      </div>
+                {calculatedShares
+                  .filter((share) => profiles.some((p) => p.id === share.profileId))
+                  .map((share) => {
+                    const profile = profiles.find((p) => p.id === share.profileId);
+                    if (!profile) return null;
+                    const displayName = profile.fullName || profile.email?.split('@')[0] || 'Roommate';
+                    const initial = displayName.charAt(0).toUpperCase();
 
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-1">
-                          <input
-                            type="number"
-                            step="0.1"
-                            value={share.percentage}
-                            onChange={(e) => handlePercentageChange(share.profileId, Number(e.target.value))}
-                            className="w-14 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-center text-xs font-bold text-zinc-100 focus:outline-none focus:border-brand-500"
-                          />
-                          <span className="text-zinc-500">%</span>
+                    return (
+                      <div
+                        key={share.profileId}
+                        className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80 text-xs"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          {profile.avatarUrl ? (
+                            <img
+                              src={profile.avatarUrl}
+                              alt={displayName}
+                              className="w-6 h-6 rounded-full object-cover shrink-0"
+                              onError={(e) => {
+                                (e.currentTarget as HTMLElement).style.display = 'none';
+                                const next = (e.currentTarget as HTMLElement).nextElementSibling;
+                                if (next) (next as HTMLElement).classList.remove('hidden');
+                              }}
+                            />
+                          ) : null}
+                          <div
+                            className={`w-6 h-6 rounded-full bg-brand-500/20 text-brand-400 font-bold text-[10px] items-center justify-center shrink-0 ${
+                              profile.avatarUrl ? 'hidden' : 'flex'
+                            }`}
+                          >
+                            {initial}
+                          </div>
+                          <span className="font-medium text-zinc-200">
+                            {displayName} {profile.role === 'admin' ? '(Admin)' : ''}
+                          </span>
                         </div>
 
-                        <span className="font-bold text-brand-400 text-sm w-16 text-right">
-                          {formatCurrency(share.amountDue, household.currency)}
-                        </span>
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              step="0.1"
+                              value={share.percentage}
+                              onChange={(e) => handlePercentageChange(share.profileId, Number(e.target.value))}
+                              className="w-14 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-center text-xs font-bold text-zinc-100 focus:outline-none focus:border-brand-500"
+                            />
+                            <span className="text-zinc-500">%</span>
+                          </div>
+
+                          <span className="font-bold text-brand-400 text-sm w-16 text-right">
+                            {formatCurrency(share.amountDue, household.currency)}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
               </div>
             </div>
 

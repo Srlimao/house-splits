@@ -23,8 +23,17 @@ export function calculateExactSplit(
   shares: MemberShareInput[],
   priorityProfileId?: string
 ): CalculatedShare[] {
-  if (shares.length === 0 || totalAmount <= 0) {
+  if (shares.length === 0) {
     return [];
+  }
+
+  if (totalAmount <= 0) {
+    return shares.map((s) => ({
+      profileId: s.profileId,
+      percentage: s.percentage,
+      amountDue: 0,
+      cents: 0,
+    }));
   }
 
   // Convert total to integer cents to eliminate floating-point arithmetic errors

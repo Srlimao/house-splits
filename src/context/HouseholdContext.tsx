@@ -56,10 +56,50 @@ const LS_BILLS_KEY = 'housesplits_bills_v1';
 const LS_RULES_KEY = 'housesplits_rules_v1';
 const LS_HOUSE_KEY = 'housesplits_house_v1';
 
+const reconcileSplitRules = (
+  currentRules: CategorySplitRule[],
+  activeProfiles: Profile[],
+  categoriesList: BillCategory[]
+): CategorySplitRule[] => {
+  if (activeProfiles.length === 0) return [];
+
+  const activeIds = new Set(activeProfiles.map((p) => p.id));
+  const validRules = currentRules.filter((r) => activeIds.has(r.profileId));
+
+  const equalPct = Number((100 / activeProfiles.length).toFixed(1));
+  const reconciled: CategorySplitRule[] = [];
+
+  for (const cat of categoriesList) {
+    const catRules = validRules.filter((r) => r.categoryId === cat.id);
+    const sum = catRules.reduce((acc, r) => acc + r.defaultPercentage, 0);
+
+    // If every active roommate has a rule and the sum is valid (~100%)
+    if (catRules.length === activeProfiles.length && Math.abs(sum - 100) < 0.1) {
+      reconciled.push(...catRules);
+    } else {
+      // Rebalance equally across all active roommates
+      activeProfiles.forEach((p, idx) => {
+        reconciled.push({
+          id: `r-${cat.id}-${p.id}`,
+          categoryId: cat.id,
+          profileId: p.id,
+          defaultPercentage:
+            idx === 0
+              ? Number((100 - equalPct * (activeProfiles.length - 1)).toFixed(1))
+              : equalPct,
+        });
+      });
+    }
+  }
+
+  return reconciled;
+};
+
 export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Purge legacy cached mock profiles on initialization
+  // Purge legacy cached mock profiles and stale rules on initialization
   try {
     localStorage.removeItem('housesplits_profiles_v1');
+    localStorage.removeItem(LS_RULES_KEY);
   } catch {
     // ignore
   }
@@ -200,10 +240,14 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             setProfiles(mappedProfiles);
 
             const realAdmin = mappedProfiles.find((p) => p.role === 'admin');
-            if (realAdmin) {
-              setSplitRules((prevRules) =>
-                prevRules.map((r) => (r.profileId === 'user-admin' ? { ...r, profileId: realAdmin.id } : r))
+            setSplitRules((prevRules) => {
+              const mapped = prevRules.map((r) =>
+                r.profileId === 'user-admin' && realAdmin ? { ...r, profileId: realAdmin.id } : r
               );
+              return reconcileSplitRules(mapped, mappedProfiles, categories);
+            });
+
+            if (realAdmin) {
               setBills((prevBills) =>
                 prevBills.map((b) => ({
                   ...b,
@@ -418,16 +462,8 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       })
       .catch((err) => console.warn('Could not persist profile to D1:', err));
 
-    // Add default split rules for this new roommate across all existing categories
-    setSplitRules((prev) => {
-      const newRules: CategorySplitRule[] = categories.map((cat) => ({
-        id: `r-${cat.id}-${profile.id}-${Date.now()}`,
-        categoryId: cat.id,
-        profileId: profile.id,
-        defaultPercentage: 0,
-      }));
-      return [...prev, ...newRules];
-    });
+    // Reconcile default split rules evenly across all active members including the new one
+    setSplitRules((prev) => reconcileSplitRules(prev, [...profiles, profile], categories));
 
     return profile;
   };
@@ -440,7 +476,7 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const removeProfile = async (id: string) => {
     const nextProfiles = profiles.filter((p) => p.id !== id);
     setProfiles(nextProfiles);
-    setSplitRules((prev) => prev.filter((r) => r.profileId !== id));
+    setSplitRules((prev) => reconcileSplitRules(prev, nextProfiles, categories));
     setBills((prev) =>
       prev.map((b) => ({
         ...b,
