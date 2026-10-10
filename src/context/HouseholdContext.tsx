@@ -16,6 +16,7 @@ import {
   INITIAL_BILLS,
 } from '../lib/initialData';
 import { notifyNewBill, notifyPaymentMade } from '../lib/webhooks';
+import { isSupabaseConfigured, supabase } from '../lib/supabase';
 
 interface HouseholdContextType {
   household: Household;
@@ -81,6 +82,38 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     localStorage.setItem(LS_HOUSE_KEY, JSON.stringify(household));
   }, [household]);
+
+  // Sync household data (and latest invite code) from Supabase on mount
+  useEffect(() => {
+    const client = supabase;
+    if (!client) return;
+
+    const syncFromSupabase = async () => {
+      try {
+        const { data: dbHouse, error } = await client
+          .from('households')
+          .select('*')
+          .limit(1)
+          .maybeSingle();
+
+        if (dbHouse && !error) {
+          setHousehold((prev) => ({
+            ...prev,
+            id: dbHouse.id,
+            name: dbHouse.name || prev.name,
+            currency: dbHouse.currency || prev.currency,
+            inviteCode: dbHouse.invite_code || prev.inviteCode || 'MAPLE-2026',
+            adminPaymentInfo: dbHouse.admin_payment_info || prev.adminPaymentInfo,
+            webhookSettings: dbHouse.webhook_settings || prev.webhookSettings,
+          }));
+        }
+      } catch (e) {
+        console.error('Error fetching household from Supabase:', e);
+      }
+    };
+
+    syncFromSupabase();
+  }, []);
 
   const activeProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0];
 
@@ -182,7 +215,24 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, [profiles]);
 
   const updateHousehold = (updated: Partial<Household>) => {
-    setHousehold((prev) => ({ ...prev, ...updated }));
+    setHousehold((prev) => {
+      const merged = { ...prev, ...updated };
+      if (isSupabaseConfigured() && supabase) {
+        supabase
+          .from('households')
+          .update({
+            name: merged.name,
+            currency: merged.currency,
+            invite_code: merged.inviteCode,
+            admin_payment_info: merged.adminPaymentInfo,
+            webhook_settings: merged.webhookSettings,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', merged.id)
+          .then();
+      }
+      return merged;
+    });
   };
 
   const regenerateInviteCode = (): string => {

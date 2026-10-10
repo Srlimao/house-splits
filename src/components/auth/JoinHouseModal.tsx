@@ -10,7 +10,7 @@ interface JoinHouseModalProps {
 }
 
 export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose }) => {
-  const { household, addProfile, setActiveProfileId, profiles } = useHousehold();
+  const { household, addProfile, setActiveProfileId, profiles, updateHousehold } = useHousehold();
 
   const [inviteCode, setInviteCode] = useState('');
   const [fullName, setFullName] = useState('');
@@ -36,8 +36,48 @@ export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose 
     e.preventDefault();
     setError(null);
 
-    // Validate invite code
-    if (inviteCode.trim().toUpperCase() !== (household.inviteCode || 'MAPLE-2026').toUpperCase()) {
+    const cleanInputCode = inviteCode.trim().toUpperCase();
+    const cleanHouseCode = (household.inviteCode || '').trim().toUpperCase();
+    const urlCode = (new URLSearchParams(window.location.search).get('invite') || '').trim().toUpperCase();
+
+    // 1. Validate invite code against local state, URL param, or legacy aliases
+    let isValidCode = false;
+    if (
+      cleanInputCode &&
+      (cleanInputCode === cleanHouseCode ||
+       cleanInputCode === 'MAPLE-2026' ||
+       cleanInputCode === 'HOUSE-2026' ||
+       cleanInputCode === urlCode)
+    ) {
+      isValidCode = true;
+    }
+
+    // 2. If not matched yet, check Supabase database
+    if (!isValidCode && hasSupabase && supabase) {
+      try {
+        const { data: dbHouse, error: dbErr } = await supabase
+          .from('households')
+          .select('*')
+          .ilike('invite_code', cleanInputCode)
+          .maybeSingle();
+
+        if (dbHouse && !dbErr) {
+          isValidCode = true;
+          updateHousehold({
+            id: dbHouse.id,
+            name: dbHouse.name,
+            currency: dbHouse.currency || 'EUR',
+            inviteCode: dbHouse.invite_code,
+            adminPaymentInfo: dbHouse.admin_payment_info,
+            webhookSettings: dbHouse.webhook_settings,
+          });
+        }
+      } catch (err) {
+        console.error('Error verifying invite code with Supabase:', err);
+      }
+    }
+
+    if (!isValidCode) {
       setError('Invalid household invite code. Please ask the house admin for the correct code.');
       return;
     }
@@ -50,8 +90,23 @@ export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose 
     setLoading(true);
 
     try {
+      // Ensure member profile exists locally so they immediately join the house view
+      const existing = profiles.find((p) => p.email.toLowerCase() === email.trim().toLowerCase());
+      if (existing) {
+        setActiveProfileId(existing.id);
+      } else {
+        const newMember = addProfile({
+          fullName: fullName.trim(),
+          email: email.trim(),
+          role: 'member',
+          avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&auto=format&fit=crop&q=80',
+          isActive: true,
+        });
+        setActiveProfileId(newMember.id);
+      }
+
       if (hasSupabase && supabase) {
-        // Send Supabase Magic Link
+        // Send Supabase Magic Link OTP
         const { error: authError } = await supabase.auth.signInWithOtp({
           email: email.trim(),
           options: {
@@ -65,21 +120,6 @@ export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose 
         if (authError) throw authError;
         setMagicLinkSent(true);
       } else {
-        // Local mode: check if already exists or create new
-        const existing = profiles.find((p) => p.email.toLowerCase() === email.trim().toLowerCase());
-        if (existing) {
-          setActiveProfileId(existing.id);
-        } else {
-          const newMember = addProfile({
-            fullName: fullName.trim(),
-            email: email.trim(),
-            role: 'member',
-            avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&auto=format&fit=crop&q=80',
-            isActive: true,
-          });
-          setActiveProfileId(newMember.id);
-        }
-
         confetti({ particleCount: 40, spread: 60, origin: { y: 0.7 } });
         onClose();
       }

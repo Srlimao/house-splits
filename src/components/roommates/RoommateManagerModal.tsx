@@ -47,7 +47,7 @@ export const RoommateManagerModal: React.FC<RoommateManagerModalProps> = ({
   if (!isOpen) return null;
 
   const isAdmin = activeProfile.role === 'admin';
-  const inviteCode = household.inviteCode || 'HOUSE-2026';
+  const inviteCode = household.inviteCode || 'MAPLE-2026';
   const inviteUrl = `${window.location.origin}/?invite=${inviteCode}`;
 
   const shareText = `Hey! Join our household "${household.name}" on HouseSplits to track rent, utility bills, and payments: ${inviteUrl}`;
