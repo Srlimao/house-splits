@@ -11,7 +11,6 @@ import {
   Sliders,
   ArrowLeft,
 } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
 import { apiClient } from '../../lib/apiClient';
 import { useHousehold } from '../../context/HouseholdContext';
 import { HouseholdManagerSection, DbHousehold } from './HouseholdManagerSection';
@@ -36,36 +35,23 @@ export const SystemManagerPortal: React.FC<SystemManagerPortalProps> = ({
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      let fetchedHouseholds: DbHousehold[] = [];
-      let fetchedProfiles: DbProfile[] = [];
+      const [hData, pData] = await Promise.all([
+        apiClient.households.getAll(),
+        apiClient.profiles.getAll(),
+      ]);
 
-      try {
-        const [hData, pData] = await Promise.all([
-          apiClient.households.getAll(),
-          apiClient.profiles.getAll(),
-        ]);
-        fetchedHouseholds = hData;
-        fetchedProfiles = pData.map((p: any) => ({
-          id: p.id,
-          household_id: p.householdId ?? p.household_id ?? null,
-          full_name: p.fullName || p.full_name || 'User',
-          email: p.email || '',
-          role: p.role || 'member',
-          is_system_manager: Boolean(p.isSystemManager ?? p.is_system_manager),
-          avatar_url: p.avatarUrl || p.avatar_url,
-          is_active: p.isActive ?? p.is_active ?? true,
-          created_at: p.createdAt || p.created_at,
-        }));
-      } catch {
-        if (supabase) {
-          const [hRes, pRes] = await Promise.all([
-            supabase.from('households').select('*').order('created_at', { ascending: false }),
-            supabase.from('profiles').select('*').order('created_at', { ascending: false }),
-          ]);
-          fetchedHouseholds = hRes.data || [];
-          fetchedProfiles = pRes.data || [];
-        }
-      }
+      const fetchedHouseholds: DbHousehold[] = hData;
+      const fetchedProfiles: DbProfile[] = pData.map((p: any) => ({
+        id: p.id,
+        household_id: p.householdId ?? p.household_id ?? null,
+        full_name: p.fullName || p.full_name || 'User',
+        email: p.email || '',
+        role: p.role || 'member',
+        is_system_manager: Boolean(p.isSystemManager ?? p.is_system_manager),
+        avatar_url: p.avatarUrl || p.avatar_url,
+        is_active: p.isActive ?? p.is_active ?? true,
+        created_at: p.createdAt || p.created_at,
+      }));
 
       // Calculate member counts per household (EXCLUDING system managers)
       const countMap: Record<string, number> = {};

@@ -11,13 +11,11 @@ import {
 } from '../types';
 import {
   INITIAL_HOUSEHOLD,
-  INITIAL_PROFILES,
   INITIAL_CATEGORIES,
   INITIAL_RULES,
   INITIAL_BILLS,
 } from '../lib/initialData';
 import { notifyNewBill, notifyPaymentMade } from '../lib/webhooks';
-import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { apiClient } from '../lib/apiClient';
 import { signOutUser, onAuthChange, getAuthSession } from '../lib/authService';
 
@@ -57,31 +55,21 @@ const HouseholdContext = createContext<HouseholdContextType | undefined>(undefin
 const LS_BILLS_KEY = 'housesplits_bills_v1';
 const LS_RULES_KEY = 'housesplits_rules_v1';
 const LS_HOUSE_KEY = 'housesplits_house_v1';
-const LS_PROFILES_KEY = 'housesplits_profiles_v1';
 
 export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // Purge legacy cached mock profiles on initialization
+  try {
+    localStorage.removeItem('housesplits_profiles_v1');
+  } catch {
+    // ignore
+  }
+
   const [household, setHousehold] = useState<Household>(() => {
     const saved = localStorage.getItem(LS_HOUSE_KEY);
     return saved ? JSON.parse(saved) : INITIAL_HOUSEHOLD;
   });
 
-  const [profiles, setProfiles] = useState<Profile[]>(() => {
-    const saved = localStorage.getItem(LS_PROFILES_KEY);
-    const parsed: Profile[] = saved ? JSON.parse(saved) : INITIAL_PROFILES;
-    const filtered = parsed.filter((p) => p.role !== 'system_manager' && !p.isSystemManager);
-    const hasRealAdmin = filtered.some(
-      (p) => p.role === 'admin' && p.email !== 'will@example.com' && p.id !== 'user-admin'
-    );
-    return hasRealAdmin
-      ? filtered.filter(
-          (p) =>
-            p.email !== 'will@example.com' &&
-            p.id !== 'user-admin' &&
-            p.id !== 'mate-1' &&
-            p.id !== 'mate-2'
-        )
-      : filtered;
-  });
+  const [profiles, setProfiles] = useState<Profile[]>([]);
 
   const [categories] = useState<BillCategory[]>(INITIAL_CATEGORIES);
 
@@ -172,61 +160,26 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.setItem(LS_HOUSE_KEY, JSON.stringify(household));
   }, [household]);
 
-  useEffect(() => {
-    localStorage.setItem(LS_PROFILES_KEY, JSON.stringify(profiles));
-  }, [profiles]);
-
-  // Sync household data from Cloudflare Native or Supabase
+  // Sync household data from Cloudflare Native D1 via API
   useEffect(() => {
     const syncData = async () => {
       try {
-        let dbHouse: any = null;
-        let dbProfiles: any[] = [];
+        const houses = await apiClient.households.getAll();
+        if (houses && houses.length > 0) {
+          const dbHouse = (currentUser?.householdId && houses.find((h: any) => h.id === currentUser.householdId)) || houses[0];
+          if (dbHouse?.id) {
+            const dbProfiles = await apiClient.profiles.getAll(dbHouse.id);
+            setHousehold((prev) => ({
+              ...prev,
+              id: dbHouse.id,
+              name: dbHouse.name || prev.name,
+              currency: dbHouse.currency || prev.currency,
+              inviteCode: dbHouse.invite_code || prev.inviteCode || 'MAPLE-2026',
+              adminPaymentInfo: dbHouse.admin_payment_info || prev.adminPaymentInfo,
+              webhookSettings: dbHouse.webhook_settings || prev.webhookSettings,
+            }));
 
-        // 1. Try native apiClient
-        try {
-          const houses = await apiClient.households.getAll();
-          if (houses && houses.length > 0) {
-            dbHouse = (currentUser?.householdId && houses.find((h: any) => h.id === currentUser.householdId)) || houses[0];
-            if (dbHouse?.id) {
-              dbProfiles = await apiClient.profiles.getAll(dbHouse.id);
-            }
-          }
-        } catch {
-          // Native API not available, fall back to Supabase
-        }
-
-        // 2. Fall back to Supabase if not loaded
-        if (!dbHouse && supabase) {
-          const { data, error } = await supabase
-            .from('households')
-            .select('*')
-            .limit(1)
-            .maybeSingle();
-
-          if (data && !error) {
-            dbHouse = data;
-            const { data: sProfs } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('household_id', dbHouse.id);
-            dbProfiles = sProfs || [];
-          }
-        }
-
-        if (dbHouse) {
-          setHousehold((prev) => ({
-            ...prev,
-            id: dbHouse.id,
-            name: dbHouse.name || prev.name,
-            currency: dbHouse.currency || prev.currency,
-            inviteCode: dbHouse.invite_code || dbHouse.inviteCode || prev.inviteCode || 'MAPLE-2026',
-            adminPaymentInfo: dbHouse.admin_payment_info || dbHouse.adminPaymentInfo || prev.adminPaymentInfo,
-            webhookSettings: dbHouse.webhook_settings || dbHouse.webhookSettings || prev.webhookSettings,
-          }));
-
-          if (dbProfiles && dbProfiles.length > 0) {
-            const mappedProfiles: Profile[] = dbProfiles
+            const mappedProfiles: Profile[] = (dbProfiles || [])
               .filter((dbP) => {
                 const role = dbP.role as UserRole;
                 const isSys = Boolean(dbP.is_system_manager ?? dbP.isSystemManager ?? role === 'system_manager');
@@ -416,42 +369,18 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   };
 
-  useEffect(() => {
-    localStorage.setItem(LS_PROFILES_KEY, JSON.stringify(profiles));
-  }, [profiles]);
-
-  // Remove mock system admin (will@example.com / user-admin) if a real admin exists
-  useEffect(() => {
-    const realAdmin = profiles.find(
-      (p) => p.role === 'admin' && p.email !== 'will@example.com' && p.id !== 'user-admin'
-    );
-    if (realAdmin) {
-      if (profiles.some((p) => p.email === 'will@example.com' || p.id === 'user-admin')) {
-        setProfiles((prev) => prev.filter((p) => p.email !== 'will@example.com' && p.id !== 'user-admin'));
-      }
-      if (activeProfileId === 'user-admin') {
-        setActiveProfileId(realAdmin.id);
-      }
-    }
-  }, [profiles, activeProfileId]);
-
   const updateHousehold = (updated: Partial<Household>) => {
     setHousehold((prev) => {
       const merged = { ...prev, ...updated };
-      if (isSupabaseConfigured() && supabase) {
-        supabase
-          .from('households')
-          .update({
-            name: merged.name,
-            currency: merged.currency,
-            invite_code: merged.inviteCode,
-            admin_payment_info: merged.adminPaymentInfo,
-            webhook_settings: merged.webhookSettings,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', merged.id)
-          .then();
-      }
+      apiClient.households
+        .update(merged.id, {
+          name: merged.name,
+          currency: merged.currency,
+          invite_code: merged.inviteCode,
+          admin_payment_info: merged.adminPaymentInfo,
+          webhook_settings: merged.webhookSettings,
+        })
+        .catch((err) => console.warn('Could not persist household update to D1:', err));
       return merged;
     });
   };
@@ -489,19 +418,6 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       })
       .catch((err) => console.warn('Could not persist profile to D1:', err));
 
-    // Best-effort Supabase
-    if (supabase) {
-      supabase.from('profiles').insert({
-        id: newId,
-        household_id: household.id,
-        full_name: newMember.fullName,
-        email: newMember.email,
-        role: newMember.role || 'member',
-        avatar_url: newMember.avatarUrl,
-        is_active: true,
-      }).then();
-    }
-
     // Add default split rules for this new roommate across all existing categories
     setSplitRules((prev) => {
       const newRules: CategorySplitRule[] = categories.map((cat) => ({
@@ -537,20 +453,11 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       setActiveProfileId(nextAdmin ? nextAdmin.id : nextProfiles[0]?.id || '');
     }
 
-    // 1. Delete from Cloudflare Native D1 via API
+    // Delete from Cloudflare Native D1 via API
     try {
       await apiClient.profiles.delete(id);
     } catch (err) {
       console.warn('apiClient delete error:', err);
-    }
-
-    // 2. Best-effort Supabase delete
-    if (supabase) {
-      try {
-        await supabase.from('profiles').delete().eq('id', id);
-      } catch (err) {
-        console.warn('Supabase delete error:', err);
-      }
     }
   };
 

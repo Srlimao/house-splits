@@ -1,5 +1,4 @@
-import { supabase, isSupabaseConfigured } from './supabase';
-import { apiClient } from './apiClient';
+import { apiClient, UserSession } from './apiClient';
 
 export interface AuthUserInfo {
   id: string;
@@ -10,34 +9,22 @@ export interface AuthUserInfo {
 export const isAuthEnabled = (): boolean => true;
 
 export const signInWithEmailPassword = async (email: string, password: string): Promise<any> => {
-  // 1. Try Cloudflare Native /api/auth/login
-  try {
-    const res = await apiClient.auth.login(email, password);
-    if (res?.user) {
-      const userPayload = {
-        id: res.user.id,
-        email: res.user.email,
-        role: res.user.role,
-        isSystemManager: res.user.isSystemManager,
-        householdId: res.user.householdId,
-        user_metadata: { full_name: res.user.fullName },
-      };
-      window.dispatchEvent(new CustomEvent('housesplits_auth_change', { detail: { user: userPayload } }));
-      return userPayload;
-    }
-  } catch (apiErr: any) {
-    // If running with Supabase as fallback
-    if (supabase) {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (error) throw error;
-      if (!data.user) throw new Error('No user returned from login.');
-      return data.user;
-    }
-    throw apiErr;
+  const res = await apiClient.auth.login(email.trim(), password);
+  if (!res?.user) {
+    throw new Error('Invalid email or password');
   }
+
+  const userPayload = {
+    id: res.user.id,
+    email: res.user.email,
+    role: res.user.role,
+    isSystemManager: res.user.isSystemManager,
+    householdId: res.user.householdId,
+    user_metadata: { full_name: res.user.fullName },
+  };
+
+  window.dispatchEvent(new CustomEvent('housesplits_auth_change', { detail: { user: userPayload } }));
+  return userPayload;
 };
 
 export const signUpWithEmailPassword = async (
@@ -46,51 +33,30 @@ export const signUpWithEmailPassword = async (
   fullName: string,
   inviteCodeOrHouseholdId: string
 ): Promise<any> => {
-  // 1. Try Cloudflare Native /api/auth/signup
-  try {
-    const res = await apiClient.auth.signup(fullName, email, password, inviteCodeOrHouseholdId);
-    if (res?.user) {
-      const userPayload = {
-        id: res.user.id,
-        email: res.user.email,
-        role: res.user.role,
-        isSystemManager: res.user.isSystemManager,
-        householdId: res.user.householdId,
-        user_metadata: { full_name: res.user.fullName },
-      };
-      window.dispatchEvent(new CustomEvent('housesplits_auth_change', { detail: { user: userPayload } }));
-      return userPayload;
-    }
-  } catch (apiErr: any) {
-    if (supabase) {
-      const { data, error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
-        options: {
-          data: {
-            full_name: fullName.trim(),
-            household_id: inviteCodeOrHouseholdId,
-          },
-        },
-      });
-      if (error) throw error;
-      if (!data.user) throw new Error('Sign up failed.');
-      return data.user;
-    }
-    throw apiErr;
+  const res = await apiClient.auth.signup(fullName.trim(), email.trim(), password, inviteCodeOrHouseholdId);
+  if (!res?.user) {
+    throw new Error('Sign up failed');
   }
+
+  const userPayload = {
+    id: res.user.id,
+    email: res.user.email,
+    role: res.user.role,
+    isSystemManager: res.user.isSystemManager,
+    householdId: res.user.householdId,
+    user_metadata: { full_name: res.user.fullName },
+  };
+
+  window.dispatchEvent(new CustomEvent('housesplits_auth_change', { detail: { user: userPayload } }));
+  return userPayload;
 };
 
 export const signOutUser = async (): Promise<void> => {
   await apiClient.auth.logout();
   window.dispatchEvent(new CustomEvent('housesplits_auth_change', { detail: null }));
-  if (supabase) {
-    await supabase.auth.signOut();
-  }
 };
 
 export const getAuthSession = async (): Promise<any> => {
-  // 1. Check Cloudflare Native session
   try {
     const user = await apiClient.auth.getSession();
     if (user) {
@@ -108,12 +74,6 @@ export const getAuthSession = async (): Promise<any> => {
   } catch {
     // ignore
   }
-
-  // 2. Fallback to Supabase session if configured and no native token exists
-  if (!localStorage.getItem('housesplits_token') && supabase) {
-    const { data, error } = await supabase.auth.getSession();
-    if (!error && data.session) return data.session;
-  }
   return null;
 };
 
@@ -123,20 +83,7 @@ export const onAuthChange = (callback: (session: any) => void) => {
   };
   window.addEventListener('housesplits_auth_change', customHandler);
 
-  let sub: any = null;
-  if (supabase) {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      // If a native session token exists, do NOT allow Supabase null session to overwrite it
-      if (!session && localStorage.getItem('housesplits_token')) {
-        return;
-      }
-      callback(session);
-    });
-    sub = subscription;
-  }
-
   return () => {
     window.removeEventListener('housesplits_auth_change', customHandler);
-    if (sub) sub.unsubscribe();
   };
 };

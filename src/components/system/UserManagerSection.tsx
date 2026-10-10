@@ -8,7 +8,6 @@ import {
   Loader2,
   AlertTriangle,
 } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
 import { apiClient } from '../../lib/apiClient';
 import { DbHousehold } from './HouseholdManagerSection';
 import { UserRole } from '../../types';
@@ -61,21 +60,7 @@ export const UserManagerSection: React.FC<UserManagerSectionProps> = ({
         updates.household_id = null;
       }
 
-      // Sync to Cloudflare D1
-      try {
-        await apiClient.profiles.update(profileId, updates);
-      } catch {
-        // Continue if falling back to Supabase
-      }
-
-      // Sync to Supabase
-      if (supabase) {
-        const { error: updErr } = await supabase
-          .from('profiles')
-          .update(updates)
-          .eq('id', profileId);
-        if (updErr) throw updErr;
-      }
+      await apiClient.profiles.update(profileId, updates);
 
       showNotification(`Updated role to ${newRole}${isSys ? ' (unbound from household)' : ''}`);
       onRefresh();
@@ -101,19 +86,7 @@ export const UserManagerSection: React.FC<UserManagerSectionProps> = ({
       const targetHouseId = newHouseId === 'none' ? null : newHouseId;
       const updates = { household_id: targetHouseId };
 
-      try {
-        await apiClient.profiles.update(profileId, updates);
-      } catch {
-        // continue
-      }
-
-      if (supabase) {
-        const { error: updErr } = await supabase
-          .from('profiles')
-          .update(updates)
-          .eq('id', profileId);
-        if (updErr) throw updErr;
-      }
+      await apiClient.profiles.update(profileId, updates);
 
       showNotification('Household reassigned');
       onRefresh();
@@ -140,15 +113,6 @@ export const UserManagerSection: React.FC<UserManagerSectionProps> = ({
 
     try {
       await apiClient.profiles.delete(p.id);
-
-      if (supabase) {
-        try {
-          await supabase.from('profiles').delete().eq('id', p.id);
-        } catch {
-          // ignore Supabase RLS error when running under native Cloudflare auth
-        }
-      }
-
       showNotification(`Removed user ${p.full_name}`);
       onRefresh();
     } catch (err: unknown) {

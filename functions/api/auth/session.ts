@@ -47,28 +47,37 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
           avatar_url: string;
         }>();
 
-      if (dbProfile) {
-        return new Response(
-          JSON.stringify({
-            user: {
-              id: dbProfile.id,
-              email: dbProfile.email,
-              fullName: dbProfile.full_name,
-              role: dbProfile.role,
-              isSystemManager: Boolean(dbProfile.is_system_manager),
-              householdId: dbProfile.household_id,
-              avatarUrl: dbProfile.avatar_url,
-            },
-          }),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        );
+      if (!dbProfile) {
+        // Profile was deleted from D1: invalidate session immediately
+        return new Response(JSON.stringify({ user: null }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Set-Cookie': 'housesplits_session=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0',
+          },
+        });
       }
+
+      return new Response(
+        JSON.stringify({
+          user: {
+            id: dbProfile.id,
+            email: dbProfile.email,
+            fullName: dbProfile.full_name,
+            role: dbProfile.role,
+            isSystemManager: Boolean(dbProfile.is_system_manager),
+            householdId: dbProfile.household_id,
+            avatarUrl: dbProfile.avatar_url,
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
     }
 
-    return new Response(JSON.stringify({ user: payload }), {
+    return new Response(JSON.stringify({ user: null }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },
     });

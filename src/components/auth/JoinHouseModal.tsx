@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useHousehold } from '../../context/HouseholdContext';
-import { isSupabaseConfigured, supabase } from '../../lib/supabase';
 import { LogIn, Key, Sparkles, User, Mail, X, Check, ArrowRight } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -17,7 +16,6 @@ export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose 
   const [email, setEmail] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [magicLinkSent, setMagicLinkSent] = useState(false);
 
   // Auto-detect invite code in URL search params (e.g. ?invite=MAPLE-2026)
   useEffect(() => {
@@ -30,15 +28,13 @@ export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose 
 
   if (!isOpen) return null;
 
-  const hasSupabase = isSupabaseConfigured();
-
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
-    const cleanInputCode = inviteCode.trim().toUpperCase();
-    const cleanHouseCode = (household.inviteCode || '').trim().toUpperCase();
-    const urlCode = (new URLSearchParams(window.location.search).get('invite') || '').trim().toUpperCase();
+    const cleanInputCode = inviteCode.trim().replace(/\s+/g, '').toUpperCase();
+    const cleanHouseCode = (household.inviteCode || '').trim().replace(/\s+/g, '').toUpperCase();
+    const urlCode = (new URLSearchParams(window.location.search).get('invite') || '').trim().replace(/\s+/g, '').toUpperCase();
 
     // 1. Validate invite code against local state, URL param, or legacy aliases
     let isValidCode = false;
@@ -50,31 +46,6 @@ export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose 
        cleanInputCode === urlCode)
     ) {
       isValidCode = true;
-    }
-
-    // 2. If not matched yet, check Supabase database
-    if (!isValidCode && hasSupabase && supabase) {
-      try {
-        const { data: dbHouse, error: dbErr } = await supabase
-          .from('households')
-          .select('*')
-          .ilike('invite_code', cleanInputCode)
-          .maybeSingle();
-
-        if (dbHouse && !dbErr) {
-          isValidCode = true;
-          updateHousehold({
-            id: dbHouse.id,
-            name: dbHouse.name,
-            currency: dbHouse.currency || 'EUR',
-            inviteCode: dbHouse.invite_code,
-            adminPaymentInfo: dbHouse.admin_payment_info,
-            webhookSettings: dbHouse.webhook_settings,
-          });
-        }
-      } catch (err) {
-        console.error('Error verifying invite code with Supabase:', err);
-      }
     }
 
     if (!isValidCode) {
@@ -90,7 +61,6 @@ export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose 
     setLoading(true);
 
     try {
-      // Ensure member profile exists locally so they immediately join the house view
       const existing = profiles.find((p) => p.email.toLowerCase() === email.trim().toLowerCase());
       if (existing) {
         setActiveProfileId(existing.id);
@@ -105,47 +75,8 @@ export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose 
         setActiveProfileId(newMember.id);
       }
 
-      if (hasSupabase && supabase) {
-        try {
-          // Send Supabase Magic Link OTP
-          const { error: authError } = await supabase.auth.signInWithOtp({
-            email: email.trim(),
-            options: {
-              emailRedirectTo: `${window.location.origin}/`,
-              data: {
-                full_name: fullName.trim(),
-                household_id: household.id,
-              },
-            },
-          });
-
-          if (authError) {
-            const msg = (authError.message || '').toLowerCase();
-            if (msg.includes('rate limit') || msg.includes('limit reached') || (authError as any).status === 429) {
-              // Supabase built-in mailer has a 2-3 emails/hr cap without custom SMTP.
-              // Gracefully allow the roommate in with their valid household invite code.
-              console.warn('Supabase free mailer quota reached. Proceeding with instant entry:', authError.message);
-              confetti({ particleCount: 40, spread: 60, origin: { y: 0.7 } });
-              onClose();
-              return;
-            }
-            throw authError;
-          }
-          setMagicLinkSent(true);
-        } catch (authErr: any) {
-          const msg = (authErr.message || '').toLowerCase();
-          if (msg.includes('rate limit') || msg.includes('limit reached') || authErr.status === 429) {
-            console.warn('Supabase free mailer quota reached. Proceeding with instant entry:', authErr.message);
-            confetti({ particleCount: 40, spread: 60, origin: { y: 0.7 } });
-            onClose();
-            return;
-          }
-          throw authErr;
-        }
-      } else {
-        confetti({ particleCount: 40, spread: 60, origin: { y: 0.7 } });
-        onClose();
-      }
+      confetti({ particleCount: 40, spread: 60, origin: { y: 0.7 } });
+      onClose();
     } catch (err: any) {
       setError(err.message || 'Failed to join household.');
     } finally {
@@ -173,29 +104,12 @@ export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose 
           </button>
         </div>
 
-        {magicLinkSent ? (
-          <div className="py-6 text-center space-y-3">
-            <div className="w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center mx-auto">
-              <Check className="w-6 h-6" />
+        <form onSubmit={handleJoin} className="space-y-4">
+          {error && (
+            <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 text-rose-300 text-xs">
+              {error}
             </div>
-            <h4 className="font-bold text-white text-base">Magic Link Sent!</h4>
-            <p className="text-xs text-zinc-400 max-w-xs mx-auto">
-              We sent a verification link to <strong>{email}</strong>. Tap the link in your email to sign in to {household.name}.
-            </p>
-            <button
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold"
-            >
-              Close
-            </button>
-          </div>
-        ) : (
-          <form onSubmit={handleJoin} className="space-y-4">
-            {error && (
-              <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 text-rose-300 text-xs">
-                {error}
-              </div>
-            )}
+          )}
 
             <div>
               <label className="block text-xs font-semibold text-zinc-400 uppercase mb-1">
@@ -257,7 +171,6 @@ export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose 
               <ArrowRight className="w-4 h-4" />
             </button>
           </form>
-        )}
 
       </div>
     </div>

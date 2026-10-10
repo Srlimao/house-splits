@@ -48,10 +48,18 @@ export const apiClient = {
           headers['Authorization'] = `Bearer ${token}`;
         }
         const res = await fetch('/api/auth/session', { headers });
-        if (!res.ok) return null;
+        if (!res.ok) {
+          localStorage.removeItem('housesplits_token');
+          return null;
+        }
         const data = await res.json();
-        return data.user || null;
+        if (!data.user) {
+          localStorage.removeItem('housesplits_token');
+          return null;
+        }
+        return data.user;
       } catch {
+        localStorage.removeItem('housesplits_token');
         return null;
       }
     },

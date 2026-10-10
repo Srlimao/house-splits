@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
 import { X, Plus, Sparkles, Loader2, Home } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
 import { apiClient } from '../../lib/apiClient';
 
 interface CreateHouseholdModalProps {
@@ -42,30 +41,11 @@ export const CreateHouseholdModal: React.FC<CreateHouseholdModalProps> = ({
     try {
       const codeToUse = inviteCode.trim() || `HOUSE-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-      // 1. Primary create: Cloudflare D1 Native API
-      const newHouse = await apiClient.households.create({
+      await apiClient.households.create({
         name: name.trim(),
         currency,
         invite_code: codeToUse,
       });
-
-      // 2. Best-effort Supabase sync
-      if (supabase) {
-        try {
-          await supabase.from('households').insert([
-            {
-              id: newHouse?.id,
-              name: name.trim(),
-              currency,
-              invite_code: codeToUse,
-              admin_payment_info: { iban: '', revolut: '', bizum: '', notes: '' },
-              webhook_settings: { discord_url: '', notify_on_new_bill: true, notify_on_payment: true },
-            },
-          ]);
-        } catch {
-          // ignore
-        }
-      }
 
       onCreated();
       onClose();

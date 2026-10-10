@@ -10,7 +10,6 @@ import {
   AlertTriangle,
   Loader2,
 } from 'lucide-react';
-import { supabase } from '../../lib/supabase';
 import { apiClient } from '../../lib/apiClient';
 
 export interface DbHousehold {
@@ -62,18 +61,7 @@ export const HouseholdManagerSection: React.FC<HouseholdManagerSectionProps> = (
     setError(null);
 
     try {
-      // 1. Primary delete: Cloudflare D1 via API
       await apiClient.households.delete(h.id);
-
-      // 2. Best-effort Supabase delete
-      if (supabase) {
-        try {
-          await supabase.from('households').delete().eq('id', h.id);
-        } catch {
-          // ignore
-        }
-      }
-
       onRefresh();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to delete household';
