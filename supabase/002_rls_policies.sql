@@ -32,6 +32,11 @@ ON public.profiles FOR UPDATE
 TO anon, authenticated
 USING (true);
 
+CREATE POLICY "Allow delete profiles"
+ON public.profiles FOR DELETE
+TO anon, authenticated
+USING (true);
+
 -- 3. Bill Categories Policies
 CREATE POLICY "Allow read categories"
 ON public.bill_categories FOR SELECT

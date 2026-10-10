@@ -33,11 +33,13 @@ export const RoommateManagerModal: React.FC<RoommateManagerModalProps> = ({
     addProfile,
     removeProfile,
     regenerateInviteCode,
+    currentUser,
   } = useHousehold();
 
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedMsg, setCopiedMsg] = useState(false);
   const [isAdding, setIsAdding] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // New roommate form state
   const [newName, setNewName] = useState('');
@@ -46,7 +48,10 @@ export const RoommateManagerModal: React.FC<RoommateManagerModalProps> = ({
 
   if (!isOpen) return null;
 
-  const isAdmin = activeProfile.role === 'admin';
+  const isAdmin =
+    activeProfile.role === 'admin' ||
+    Boolean(currentUser && profiles.some((p) => (p.email?.toLowerCase() === currentUser.email?.toLowerCase() || p.id === currentUser.id) && p.role === 'admin'));
+  const isUserAdmin = isAdmin;
   const inviteCode = household.inviteCode || 'MAPLE-2026';
   const inviteUrl = `${window.location.origin}/?invite=${inviteCode}`;
 
@@ -246,7 +251,9 @@ export const RoommateManagerModal: React.FC<RoommateManagerModalProps> = ({
           {/* Members List */}
           <div className="space-y-2">
             {profiles.map((p) => {
-              const isCurrent = p.id === activeProfile.id;
+              const isCurrent =
+                p.id === activeProfile.id ||
+                Boolean(currentUser && (p.email?.toLowerCase() === currentUser.email?.toLowerCase() || p.id === currentUser.id));
               const isHouseAdmin = p.role === 'admin';
 
               return (
@@ -286,13 +293,27 @@ export const RoommateManagerModal: React.FC<RoommateManagerModalProps> = ({
                       {p.role}
                     </span>
 
-                    {isAdmin && p.id !== activeProfile.id && (
+                    {isUserAdmin && !isCurrent && (
                       <button
-                        onClick={() => removeProfile(p.id)}
-                        className="p-1.5 text-zinc-500 hover:text-rose-400 rounded-lg hover:bg-zinc-800 transition-colors"
-                        title="Remove roommate"
+                        onClick={async () => {
+                          if (window.confirm(`Are you sure you want to remove ${p.fullName} from the household?`)) {
+                            try {
+                              setDeletingId(p.id);
+                              await removeProfile(p.id);
+                            } finally {
+                              setDeletingId(null);
+                            }
+                          }
+                        }}
+                        disabled={deletingId === p.id}
+                        className="p-1.5 text-zinc-500 hover:text-rose-400 rounded-lg hover:bg-zinc-800 transition-colors disabled:opacity-50"
+                        title={`Remove ${p.fullName}`}
                       >
-                        <Trash2 className="w-4 h-4" />
+                        {deletingId === p.id ? (
+                          <RefreshCw className="w-4 h-4 animate-spin text-rose-400" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
                       </button>
                     )}
                   </div>

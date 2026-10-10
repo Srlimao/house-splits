@@ -36,7 +36,7 @@ interface HouseholdContextType {
   updateHousehold: (updated: Partial<Household>) => void;
   addProfile: (profile: Omit<Profile, 'id' | 'householdId'>) => Profile;
   updateProfile: (id: string, updates: Partial<Profile>) => void;
-  removeProfile: (id: string) => void;
+  removeProfile: (id: string) => Promise<void>;
   regenerateInviteCode: () => string;
   currentUser: { id: string; email: string } | null;
   isAuthLoading: boolean;
@@ -134,6 +134,10 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.setItem(LS_HOUSE_KEY, JSON.stringify(household));
   }, [household]);
 
+  useEffect(() => {
+    localStorage.setItem(LS_PROFILES_KEY, JSON.stringify(profiles));
+  }, [profiles]);
+
   // Sync household data (and latest invite code) from Supabase on mount
   useEffect(() => {
     const client = supabase;
@@ -224,7 +228,23 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     syncFromSupabase();
   }, []);
 
-  const activeProfile = profiles.find((p) => p.id === activeProfileId) || profiles[0];
+  // Keep activeProfileId in sync with current logged-in user or active admin
+  useEffect(() => {
+    if (currentUser && profiles.length > 0) {
+      const match = profiles.find(
+        (p) => p.email.toLowerCase() === currentUser.email.toLowerCase() || p.id === currentUser.id
+      );
+      if (match && activeProfileId !== match.id) {
+        setActiveProfileId(match.id);
+      }
+    }
+  }, [currentUser, profiles, activeProfileId]);
+
+  const activeProfile =
+    profiles.find((p) => p.id === activeProfileId) ||
+    profiles.find((p) => currentUser && (p.email.toLowerCase() === currentUser.email.toLowerCase() || p.id === currentUser.id)) ||
+    profiles.find((p) => p.role === 'admin') ||
+    profiles[0];
 
   const addBill = async (billData: Omit<Bill, 'id' | 'createdAt'>): Promise<Bill> => {
     const newBill: Bill = {
@@ -397,11 +417,31 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     setProfiles((prev) => prev.map((p) => (p.id === id ? { ...p, ...updates } : p)));
   };
 
-  const removeProfile = (id: string) => {
-    setProfiles((prev) => prev.filter((p) => p.id !== id));
+  const removeProfile = async (id: string) => {
+    const nextProfiles = profiles.filter((p) => p.id !== id);
+    setProfiles(nextProfiles);
     setSplitRules((prev) => prev.filter((r) => r.profileId !== id));
+    setBills((prev) =>
+      prev.map((b) => ({
+        ...b,
+        splits: b.splits.filter((s) => s.profileId !== id),
+      }))
+    );
+
     if (activeProfileId === id) {
-      setActiveProfileId('user-admin');
+      const nextAdmin = nextProfiles.find((p) => p.role === 'admin');
+      setActiveProfileId(nextAdmin ? nextAdmin.id : nextProfiles[0]?.id || '');
+    }
+
+    if (supabase) {
+      try {
+        const { error } = await supabase.from('profiles').delete().eq('id', id);
+        if (error) {
+          console.error('Error deleting profile from Supabase:', error);
+        }
+      } catch (err) {
+        console.error('Exception deleting profile from Supabase:', err);
+      }
     }
   };
 
