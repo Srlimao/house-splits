@@ -11,6 +11,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { apiClient } from '../../lib/apiClient';
 
 export interface DbHousehold {
   id: string;
@@ -60,16 +61,19 @@ export const HouseholdManagerSection: React.FC<HouseholdManagerSectionProps> = (
     setDeletingId(h.id);
     setError(null);
 
-    const client = supabase;
-    if (!client) {
-      setError('Database client not available.');
-      setDeletingId(null);
-      return;
-    }
-
     try {
-      const { error: delErr } = await client.from('households').delete().eq('id', h.id);
-      if (delErr) throw delErr;
+      // 1. Primary delete: Cloudflare D1 via API
+      await apiClient.households.delete(h.id);
+
+      // 2. Best-effort Supabase delete
+      if (supabase) {
+        try {
+          await supabase.from('households').delete().eq('id', h.id);
+        } catch {
+          // ignore
+        }
+      }
+
       onRefresh();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to delete household';

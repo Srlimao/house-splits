@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Plus, Sparkles, Loader2, Home } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
+import { apiClient } from '../../lib/apiClient';
 
 interface CreateHouseholdModalProps {
   isOpen: boolean;
@@ -38,41 +39,32 @@ export const CreateHouseholdModal: React.FC<CreateHouseholdModalProps> = ({
     setLoading(true);
     setError(null);
 
-    const client = supabase;
-    if (!client) {
-      setError('Database client is not available.');
-      setLoading(false);
-      return;
-    }
-
     try {
       const codeToUse = inviteCode.trim() || `HOUSE-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
 
-      const { data: newHouse, error: houseErr } = await client
-        .from('households')
-        .insert([
-          {
-            name: name.trim(),
-            currency,
-            invite_code: codeToUse,
-            admin_payment_info: { iban: '', revolut: '', bizum: '', notes: '' },
-            webhook_settings: { discord_url: '', notify_on_new_bill: true, notify_on_payment: true },
-          },
-        ])
-        .select()
-        .single();
+      // 1. Primary create: Cloudflare D1 Native API
+      const newHouse = await apiClient.households.create({
+        name: name.trim(),
+        currency,
+        invite_code: codeToUse,
+      });
 
-      if (houseErr) throw houseErr;
-
-      // Seed standard bill categories for the new household
-      if (newHouse?.id) {
-        await client.from('bill_categories').insert([
-          { household_id: newHouse.id, name: 'Rent', code: 'rent', icon: 'home', color_hex: '#6366f1' },
-          { household_id: newHouse.id, name: 'Electricity', code: 'electricity', icon: 'zap', color_hex: '#f59e0b' },
-          { household_id: newHouse.id, name: 'Water', code: 'water', icon: 'droplet', color_hex: '#3b82f6' },
-          { household_id: newHouse.id, name: 'Internet', code: 'internet', icon: 'wifi', color_hex: '#8b5cf6' },
-          { household_id: newHouse.id, name: 'Gas', code: 'gas', icon: 'flame', color_hex: '#ef4444' },
-        ]);
+      // 2. Best-effort Supabase sync
+      if (supabase) {
+        try {
+          await supabase.from('households').insert([
+            {
+              id: newHouse?.id,
+              name: name.trim(),
+              currency,
+              invite_code: codeToUse,
+              admin_payment_info: { iban: '', revolut: '', bizum: '', notes: '' },
+              webhook_settings: { discord_url: '', notify_on_new_bill: true, notify_on_payment: true },
+            },
+          ]);
+        } catch {
+          // ignore
+        }
       }
 
       onCreated();
