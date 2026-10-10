@@ -1,3 +1,5 @@
+import { hashPassword } from '../_auth';
+
 interface Env {
   DB: D1Database;
 }
@@ -61,12 +63,13 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const role = body.role || 'member';
     const isSys = role === 'system_manager' ? 1 : 0;
     const avatarUrl = body.avatar_url || body.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&auto=format&fit=crop&q=80';
+    const passwordHash = await hashPassword(body.password || crypto.randomUUID());
 
     await env.DB.prepare(
-      `INSERT INTO profiles (id, household_id, full_name, email, role, is_system_manager, avatar_url, is_active, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))`
+      `INSERT INTO profiles (id, household_id, full_name, email, password_hash, role, is_system_manager, avatar_url, is_active, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, datetime('now'), datetime('now'))`
     )
-      .bind(id, isSys ? null : householdId, fullName, email, role, isSys, avatarUrl)
+      .bind(id, isSys ? null : householdId, fullName, email, passwordHash, role, isSys, avatarUrl)
       .run();
 
     return new Response(JSON.stringify({ success: true, id }), {

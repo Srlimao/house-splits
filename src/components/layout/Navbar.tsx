@@ -88,19 +88,25 @@ export const Navbar: React.FC<NavbarProps> = ({
 
             <div className="text-left">
               <span className="block text-[10px] text-zinc-400 uppercase font-semibold leading-none">
-                Viewing as:
+                {currentUser?.role === 'admin' ? 'Viewing as:' : 'Logged in as:'}
               </span>
-              <select
-                value={activeProfile.id}
-                onChange={(e) => setActiveProfileId(e.target.value)}
-                className="bg-transparent text-xs font-semibold text-zinc-200 focus:outline-none cursor-pointer pr-1"
-              >
-                {profiles.map((p) => (
-                  <option key={p.id} value={p.id} className="bg-zinc-900 text-zinc-200">
-                    {p.fullName} {p.role === 'admin' ? '(Admin)' : '(Roommate)'}
-                  </option>
-                ))}
-              </select>
+              {currentUser?.role === 'admin' ? (
+                <select
+                  value={activeProfile.id}
+                  onChange={(e) => setActiveProfileId(e.target.value)}
+                  className="bg-transparent text-xs font-semibold text-zinc-200 focus:outline-none cursor-pointer pr-1"
+                >
+                  {profiles.map((p) => (
+                    <option key={p.id} value={p.id} className="bg-zinc-900 text-zinc-200">
+                      {p.fullName} {p.role === 'admin' ? '(Admin)' : '(Roommate)'}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <span className="text-xs font-semibold text-zinc-200 block truncate max-w-[130px]">
+                  {activeProfile.fullName}
+                </span>
+              )}
             </div>
           </div>
 

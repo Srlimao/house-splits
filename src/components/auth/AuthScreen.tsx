@@ -50,9 +50,8 @@ export const AuthScreen: React.FC = () => {
           );
           if (existing) {
             setActiveProfileId(existing.id);
-          } else if (email.trim().toLowerCase() === 'w.back93@gmail.com') {
-            const adminP = profiles.find((p) => p.role === 'admin');
-            if (adminP) setActiveProfileId(adminP.id);
+          } else if (user?.id) {
+            setActiveProfileId(user.id);
           }
         } else {
           const existing = profiles.find((p) => p.email.toLowerCase() === email.trim().toLowerCase());
@@ -96,8 +95,10 @@ export const AuthScreen: React.FC = () => {
           return;
         }
 
+        const codeToPass = cleanInputCode || cleanHouseCode || urlCode || household.id;
+
         if (isAuthEnabled()) {
-          const user = await signUpWithEmailPassword(email, password, fullName, household.id);
+          const user = await signUpWithEmailPassword(email, password, fullName, codeToPass);
           const newMember = addProfile({
             fullName: fullName.trim(),
             email: email.trim(),
@@ -105,7 +106,7 @@ export const AuthScreen: React.FC = () => {
             avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&auto=format&fit=crop&q=80',
             isActive: true,
           });
-          setActiveProfileId(newMember.id);
+          setActiveProfileId(user?.id || newMember.id);
         } else {
           const newMember = addProfile({
             fullName: fullName.trim(),

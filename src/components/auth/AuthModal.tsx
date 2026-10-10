@@ -126,9 +126,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           return;
         }
 
-        // Register in Supabase Auth (zero email limit via mailer_autoconfirm)
+        const codeToPass = cleanInputCode || cleanHouseCode || urlCode || household.id;
+
         if (isAuthEnabled()) {
-          const user = await signUpWithEmailPassword(email, password, fullName, household.id);
+          const user = await signUpWithEmailPassword(email, password, fullName, codeToPass);
           const newMember = addProfile({
             fullName: fullName.trim(),
             email: email.trim(),
@@ -136,7 +137,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&auto=format&fit=crop&q=80',
             isActive: true,
           });
-          setActiveProfileId(newMember.id);
+          setActiveProfileId(user?.id || newMember.id);
         } else {
           const newMember = addProfile({
             fullName: fullName.trim(),

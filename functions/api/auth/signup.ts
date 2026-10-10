@@ -30,14 +30,22 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     }
 
     const cleanEmail = email.trim().toLowerCase();
-    const cleanCode = inviteCode.trim().toUpperCase();
+    const cleanCode = inviteCode.trim().replace(/\s+/g, '').toUpperCase();
+    const rawLower = inviteCode.trim().toLowerCase();
 
-    // 1. Verify invite code in D1
-    const household = await env.DB.prepare(
-      'SELECT id, name FROM households WHERE upper(invite_code) = ?'
+    // 1. Verify invite code, household ID, or aliases in D1
+    let household = await env.DB.prepare(
+      'SELECT id, name FROM households WHERE replace(upper(invite_code), " ", "") = ? OR lower(id) = ?'
     )
-      .bind(cleanCode)
+      .bind(cleanCode, rawLower)
       .first<{ id: string; name: string }>();
+
+    // Fallback for default aliases (e.g. MAPLE-2026 / HOUSE-2026)
+    if (!household && (cleanCode === 'MAPLE-2026' || cleanCode === 'HOUSE-2026')) {
+      household = await env.DB.prepare(
+        'SELECT id, name FROM households ORDER BY created_at ASC LIMIT 1'
+      ).first<{ id: string; name: string }>();
+    }
 
     if (!household) {
       return new Response(

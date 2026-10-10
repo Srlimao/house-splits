@@ -267,16 +267,20 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     };
 
     syncData();
-  }, [currentUser?.householdId]);
+  }, [currentUser?.householdId, currentUser?.id, currentUser?.email]);
 
   // Keep activeProfileId in sync with current logged-in user or active admin
   useEffect(() => {
-    if (currentUser && profiles.length > 0 && !currentUser.isSystemManager) {
+    if (currentUser && !currentUser.isSystemManager) {
       const match = profiles.find(
         (p) => p.email.toLowerCase() === currentUser.email.toLowerCase() || p.id === currentUser.id
       );
-      if (match && activeProfileId !== match.id) {
-        setActiveProfileId(match.id);
+      if (match) {
+        if (activeProfileId !== match.id) {
+          setActiveProfileId(match.id);
+        }
+      } else if (currentUser.id && activeProfileId !== currentUser.id) {
+        setActiveProfileId(currentUser.id);
       }
     }
   }, [currentUser, profiles, activeProfileId]);
@@ -299,10 +303,22 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     isActive: true,
   };
 
+  const currentUserFallbackProfile: Profile | null = currentUser && !isSystemManager ? {
+    id: currentUser.id,
+    householdId: currentUser.householdId || household.id,
+    fullName: (currentUser as any).fullName || (currentUser as any).user_metadata?.full_name || currentUser.email.split('@')[0],
+    email: currentUser.email,
+    role: (currentUser.role as UserRole) || 'member',
+    isSystemManager: false,
+    avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&auto=format&fit=crop&q=80',
+    isActive: true,
+  } : null;
+
   const activeProfile = isSystemManager
     ? managerProfile
-    : profiles.find((p) => p.id === activeProfileId) ||
-      profiles.find((p) => currentUser && (p.email.toLowerCase() === currentUser.email.toLowerCase() || p.id === currentUser.id)) ||
+    : profiles.find((p) => currentUser && (p.email.toLowerCase() === currentUser.email.toLowerCase() || p.id === currentUser.id)) ||
+      profiles.find((p) => p.id === activeProfileId) ||
+      currentUserFallbackProfile ||
       profiles.find((p) => p.role === 'admin') ||
       profiles[0] ||
       managerProfile;
