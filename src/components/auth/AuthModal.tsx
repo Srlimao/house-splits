@@ -153,7 +153,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }
     } catch (err: any) {
       console.error('Auth error:', err);
-      setError(err.message || 'Authentication failed. Please check your credentials.');
+      const msg = (err.message || '').toLowerCase();
+      if (msg.includes('already registered') || msg.includes('already exists')) {
+        setError('This email is already registered! Please switch to the "Sign In" tab.');
+      } else {
+        setError(err.message || 'Authentication failed. Please check your credentials.');
+      }
     } finally {
       setLoading(false);
     }
