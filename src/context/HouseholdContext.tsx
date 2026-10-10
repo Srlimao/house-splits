@@ -7,6 +7,7 @@ import {
   Bill,
   BillSplit,
   SplitStatus,
+  UserRole,
 } from '../types';
 import {
   INITIAL_HOUSEHOLD,
@@ -40,6 +41,7 @@ interface HouseholdContextType {
   regenerateInviteCode: () => string;
   currentUser: { id: string; email: string } | null;
   isAuthLoading: boolean;
+  isSystemManager: boolean;
   logout: () => Promise<void>;
 }
 
@@ -162,11 +164,10 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             webhookSettings: dbHouse.webhook_settings || prev.webhookSettings,
           }));
 
-          // Fetch profiles from Supabase and synchronize admin
+          // Fetch profiles from Supabase
           const { data: dbProfiles } = await client
             .from('profiles')
-            .select('*')
-            .eq('household_id', dbHouse.id);
+            .select('*');
 
           if (dbProfiles && dbProfiles.length > 0) {
             setProfiles((prev) => {
@@ -180,7 +181,8 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     ...updated[idx],
                     id: dbP.id,
                     fullName: dbP.full_name || updated[idx].fullName,
-                    role: (dbP.role as 'admin' | 'member') || updated[idx].role,
+                    role: (dbP.role as UserRole) || updated[idx].role,
+                    isSystemManager: dbP.is_system_manager ?? (dbP.role === 'system_manager'),
                     email: dbP.email || updated[idx].email,
                   };
                 } else {
@@ -189,7 +191,8 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     householdId: dbP.household_id,
                     fullName: dbP.full_name,
                     email: dbP.email,
-                    role: (dbP.role as 'admin' | 'member') || 'member',
+                    role: (dbP.role as UserRole) || 'member',
+                    isSystemManager: dbP.is_system_manager ?? (dbP.role === 'system_manager'),
                     avatarUrl: dbP.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&auto=format&fit=crop&q=80',
                     isActive: dbP.is_active ?? true,
                   });
@@ -239,6 +242,16 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       }
     }
   }, [currentUser, profiles, activeProfileId]);
+
+  const isSystemManager = Boolean(
+    currentUser &&
+    (currentUser.email?.toLowerCase() === 'manager@dunhas.com' ||
+      profiles.some(
+        (p) =>
+          (p.email.toLowerCase() === currentUser.email?.toLowerCase() || p.id === currentUser.id) &&
+          (p.role === 'system_manager' || p.isSystemManager)
+      ))
+  );
 
   const activeProfile =
     profiles.find((p) => p.id === activeProfileId) ||
@@ -476,6 +489,7 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         regenerateInviteCode,
         currentUser,
         isAuthLoading,
+        isSystemManager,
         logout,
       }}
     >

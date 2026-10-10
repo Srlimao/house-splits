@@ -1,4 +1,4 @@
-export type UserRole = 'admin' | 'member';
+export type UserRole = 'admin' | 'member' | 'system_manager';
 
 export type SplitStatus = 'pending' | 'paid_to_admin' | 'confirmed_by_admin';
 
@@ -37,6 +37,7 @@ export interface Profile {
   email: string;
   avatarUrl?: string;
   role: UserRole;
+  isSystemManager?: boolean;
   isActive: boolean;
 }
 

@@ -11,11 +11,13 @@ import { HouseholdSettingsModal } from './components/settings/HouseholdSettingsM
 import { PaymentInfoModal } from './components/settlement/PaymentInfoModal';
 import { RoommateManagerModal } from './components/roommates/RoommateManagerModal';
 import { AuthScreen } from './components/auth/AuthScreen';
-import { Sparkles, Receipt, SlidersHorizontal, Plus, Users, UserPlus } from 'lucide-react';
+import { SystemManagerPortal } from './components/system/SystemManagerPortal';
+import { Sparkles, Receipt, SlidersHorizontal, Plus, Users, UserPlus, ArrowLeft } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
-  const { currentUser, isAuthLoading, activeProfile, bills, profiles } = useHousehold();
+  const { currentUser, isAuthLoading, isSystemManager, activeProfile, bills, profiles, household } = useHousehold();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'bills' | 'rules' | 'settings'>('dashboard');
+  const [inspectingHouseholdId, setInspectingHouseholdId] = useState<string | null>(null);
 
   // Modals state
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -40,10 +42,31 @@ const MainAppContent: React.FC = () => {
     return <AuthScreen />;
   }
 
-  const isAdmin = activeProfile.role === 'admin';
+  // 3. System Manager Portal: Show system management if user is system manager
+  if (isSystemManager && !inspectingHouseholdId) {
+    return <SystemManagerPortal onInspectHousehold={(hId) => setInspectingHouseholdId(hId)} />;
+  }
+
+  const isAdmin = activeProfile.role === 'admin' || isSystemManager;
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col pb-24 sm:pb-12">
+      {/* System Manager Inspection Banner */}
+      {isSystemManager && inspectingHouseholdId && (
+        <div className="bg-amber-950/80 border-b border-amber-500/40 px-4 py-2 flex items-center justify-between text-xs text-amber-200 sticky top-0 z-50 backdrop-blur-md">
+          <span className="font-semibold flex items-center gap-1.5">
+            <span>⚡ System Manager Preview: Viewing household "{household.name}"</span>
+          </span>
+          <button
+            onClick={() => setInspectingHouseholdId(null)}
+            className="flex items-center gap-1 px-3 py-1 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold transition-colors"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>Return to System Portal</span>
+          </button>
+        </div>
+      )}
+
       {/* Top Navigation */}
       <Navbar
         onOpenSettings={() => setIsSettingsOpen(true)}
