@@ -30,12 +30,16 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       if (!splitsByBill[s.bill_id]) splitsByBill[s.bill_id] = [];
       splitsByBill[s.bill_id].push({
         id: s.id,
+        billId: s.bill_id,
         profileId: s.profile_id,
         amount: s.amount,
+        amountDue: s.amount,
         percentage: s.percentage,
         status: s.status,
         paidAt: s.paid_at,
+        markedPaidAt: s.paid_at,
         confirmedAt: s.confirmed_at,
+        confirmedPaidAt: s.confirmed_at,
         notes: s.notes,
       });
     });
@@ -121,11 +125,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
             splitId,
             newId,
             split.profileId,
-            split.amount,
+            split.amountDue !== undefined ? split.amountDue : (split.amount || 0),
             split.percentage,
             split.status || 'pending',
-            split.paidAt || null,
-            split.confirmedAt || null,
+            split.markedPaidAt || split.paidAt || null,
+            split.confirmedPaidAt || split.confirmedAt || null,
             split.notes || null
           )
           .run();

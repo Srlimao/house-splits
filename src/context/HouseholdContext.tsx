@@ -96,10 +96,11 @@ const reconcileSplitRules = (
 };
 
 export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  // Purge legacy cached mock profiles and stale rules on initialization
+  // Purge legacy cached mock profiles, rules, and mock bills on initialization
   try {
     localStorage.removeItem('housesplits_profiles_v1');
     localStorage.removeItem(LS_RULES_KEY);
+    localStorage.removeItem(LS_BILLS_KEY);
   } catch {
     // ignore
   }
@@ -113,14 +114,11 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const [categories] = useState<BillCategory[]>(INITIAL_CATEGORIES);
 
-  const [splitRules, setSplitRules] = useState<CategorySplitRule[]>(() => {
-    const saved = localStorage.getItem(LS_RULES_KEY);
-    return saved ? JSON.parse(saved) : INITIAL_RULES;
-  });
+  const [splitRules, setSplitRules] = useState<CategorySplitRule[]>([]);
 
   const [bills, setBills] = useState<Bill[]>(() => {
     const saved = localStorage.getItem(LS_BILLS_KEY);
-    return saved ? JSON.parse(saved) : INITIAL_BILLS;
+    return saved ? JSON.parse(saved) : [];
   });
 
   const [activeProfileId, setActiveProfileId] = useState<string>('user-admin');
@@ -209,6 +207,10 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           const dbHouse = (currentUser?.householdId && houses.find((h: any) => h.id === currentUser.householdId)) || houses[0];
           if (dbHouse?.id) {
             const dbProfiles = await apiClient.profiles.getAll(dbHouse.id);
+            const dbBills = await apiClient.bills.getAll(dbHouse.id);
+            if (dbBills) {
+              setBills(dbBills);
+            }
             setHousehold((prev) => ({
               ...prev,
               id: dbHouse.id,
@@ -321,13 +323,17 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       managerProfile;
 
   const addBill = async (billData: Omit<Bill, 'id' | 'createdAt'>): Promise<Bill> => {
+    const newId = `bill-${Date.now()}`;
     const newBill: Bill = {
       ...billData,
-      id: `bill-${Date.now()}`,
+      id: newId,
       createdAt: new Date().toISOString(),
     };
 
     setBills((prev) => [newBill, ...prev]);
+
+    // Persist to Cloudflare Native D1 via API
+    apiClient.bills.create(newBill).catch((err) => console.warn('Could not persist bill to D1:', err));
 
     // Dispatch webhook in the background if configured
     const cat = categories.find((c) => c.id === newBill.categoryId);
@@ -338,23 +344,35 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const removeBill = (billId: string) => {
     setBills((prev) => prev.filter((b) => b.id !== billId));
+    apiClient.bills.delete(billId).catch((err) => console.warn('Could not delete bill from D1:', err));
   };
 
   const togglePaidToProvider = (billId: string) => {
+    let nextPaid = false;
+    let nextPaidAt: string | undefined = undefined;
+
     setBills((prev) =>
       prev.map((b) => {
         if (b.id !== billId) return b;
-        const nextPaid = !b.paidToProvider;
+        nextPaid = !b.paidToProvider;
+        nextPaidAt = nextPaid ? new Date().toISOString() : undefined;
         return {
           ...b,
           paidToProvider: nextPaid,
-          paidToProviderAt: nextPaid ? new Date().toISOString() : undefined,
+          paidToProviderAt: nextPaidAt,
         };
       })
     );
+
+    apiClient.bills.update(billId, {
+      paidToProvider: nextPaid,
+      paidToProviderAt: nextPaidAt,
+    }).catch((err) => console.warn('Could not update bill in D1:', err));
   };
 
   const markSplitPaidToAdmin = (billId: string, profileId: string, notes?: string) => {
+    const nowIso = new Date().toISOString();
+
     setBills((prev) =>
       prev.map((b) => {
         if (b.id !== billId) return b;
@@ -363,13 +381,22 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           return {
             ...s,
             status: 'paid_to_admin' as SplitStatus,
-            markedPaidAt: new Date().toISOString(),
+            markedPaidAt: nowIso,
             notes: notes || s.notes,
           };
         });
         return { ...b, splits };
       })
     );
+
+    apiClient.bills.update(billId, {
+      splitUpdate: {
+        profileId,
+        status: 'paid_to_admin',
+        markedPaidAt: nowIso,
+        notes,
+      },
+    }).catch((err) => console.warn('Could not update split in D1:', err));
 
     const payer = profiles.find((p) => p.id === profileId);
     const targetBill = bills.find((b) => b.id === billId);
@@ -381,6 +408,8 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   };
 
   const confirmSplitPayment = (billId: string, profileId: string) => {
+    const nowIso = new Date().toISOString();
+
     setBills((prev) =>
       prev.map((b) => {
         if (b.id !== billId) return b;
@@ -389,12 +418,20 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           return {
             ...s,
             status: 'confirmed_by_admin' as SplitStatus,
-            confirmedPaidAt: new Date().toISOString(),
+            confirmedPaidAt: nowIso,
           };
         });
         return { ...b, splits };
       })
     );
+
+    apiClient.bills.update(billId, {
+      splitUpdate: {
+        profileId,
+        status: 'confirmed_by_admin',
+        confirmedPaidAt: nowIso,
+      },
+    }).catch((err) => console.warn('Could not confirm split in D1:', err));
   };
 
   const updateSplitRules = (

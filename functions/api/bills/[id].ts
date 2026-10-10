@@ -19,7 +19,7 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
     }
 
     if (body.splitUpdate) {
-      const { profileId, status, paidAt, confirmedAt, notes } = body.splitUpdate;
+      const { profileId, status, paidAt, markedPaidAt, confirmedAt, confirmedPaidAt, notes } = body.splitUpdate;
       await env.DB.prepare(
         `UPDATE bill_splits 
          SET status = COALESCE(?, status), 
@@ -28,7 +28,14 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
              notes = COALESCE(?, notes)
          WHERE bill_id = ? AND profile_id = ?`
       )
-        .bind(status || null, paidAt || null, confirmedAt || null, notes || null, billId, profileId)
+        .bind(
+          status || null,
+          markedPaidAt || paidAt || null,
+          confirmedPaidAt || confirmedAt || null,
+          notes || null,
+          billId,
+          profileId
+        )
         .run();
     }
 
