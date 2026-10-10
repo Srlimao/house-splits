@@ -55,6 +55,7 @@ export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose 
         const { error: authError } = await supabase.auth.signInWithOtp({
           email: email.trim(),
           options: {
+            emailRedirectTo: `${window.location.origin}/`,
             data: {
               full_name: fullName.trim(),
               household_id: household.id,
