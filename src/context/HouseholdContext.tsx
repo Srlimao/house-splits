@@ -39,6 +39,7 @@ interface HouseholdContextType {
   removeProfile: (id: string) => void;
   regenerateInviteCode: () => string;
   currentUser: { id: string; email: string } | null;
+  isAuthLoading: boolean;
   logout: () => Promise<void>;
 }
 
@@ -78,22 +79,27 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const [activeProfileId, setActiveProfileId] = useState<string>('user-admin');
   const [currentUser, setCurrentUser] = useState<{ id: string; email: string } | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState<boolean>(true);
 
   // Supabase Auth session watcher
   useEffect(() => {
-    getAuthSession().then((session) => {
-      if (session?.user) {
-        setCurrentUser({ id: session.user.id, email: session.user.email || '' });
-        const userEmail = session.user.email?.toLowerCase();
-        const found = profiles.find((p) => p.email.toLowerCase() === userEmail || p.id === session.user.id);
-        if (found) {
-          setActiveProfileId(found.id);
-        } else if (userEmail === 'w.back93@gmail.com') {
-          const adminP = profiles.find((p) => p.role === 'admin' || p.id === 'user-admin');
-          if (adminP) setActiveProfileId(adminP.id);
+    getAuthSession()
+      .then((session) => {
+        if (session?.user) {
+          setCurrentUser({ id: session.user.id, email: session.user.email || '' });
+          const userEmail = session.user.email?.toLowerCase();
+          const found = profiles.find((p) => p.email.toLowerCase() === userEmail || p.id === session.user.id);
+          if (found) {
+            setActiveProfileId(found.id);
+          } else if (userEmail === 'w.back93@gmail.com') {
+            const adminP = profiles.find((p) => p.role === 'admin' || p.id === 'user-admin');
+            if (adminP) setActiveProfileId(adminP.id);
+          }
         }
-      }
-    });
+      })
+      .finally(() => {
+        setIsAuthLoading(false);
+      });
 
     const unsubscribe = onAuthChange((session) => {
       if (session?.user) {
@@ -429,6 +435,7 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         removeProfile,
         regenerateInviteCode,
         currentUser,
+        isAuthLoading,
         logout,
       }}
     >

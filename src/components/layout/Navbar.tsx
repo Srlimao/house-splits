@@ -7,14 +7,12 @@ interface NavbarProps {
   onOpenSettings: () => void;
   onOpenScanner: () => void;
   onOpenRoommates: () => void;
-  onOpenAuth: (mode?: 'login' | 'join') => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   onOpenSettings,
   onOpenScanner,
   onOpenRoommates,
-  onOpenAuth,
 }) => {
   const { household, profiles, activeProfile, setActiveProfileId, currentUser, logout } = useHousehold();
   const hasGeminiKey = Boolean(getStoredGeminiKey());
@@ -127,25 +125,14 @@ export const Navbar: React.FC<NavbarProps> = ({
             <SettingsIcon className="w-5 h-5" />
           </button>
 
-          {/* Auth Button (Sign In or Log Out) */}
-          {currentUser ? (
-            <button
-              onClick={() => logout()}
-              className="p-2 rounded-xl text-zinc-400 hover:text-rose-400 hover:bg-rose-950/30 border border-transparent hover:border-rose-500/30 transition-colors"
-              title={`Logged in as ${currentUser.email}. Click to log out.`}
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
-          ) : (
-            <button
-              onClick={() => onOpenAuth('login')}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700/60 text-xs font-semibold transition-all hover:scale-[1.02]"
-              title="Sign in with Email & Password"
-            >
-              <LogIn className="w-4 h-4 text-brand-400" />
-              <span className="hidden sm:inline">Sign In</span>
-            </button>
-          )}
+          {/* Log Out Button */}
+          <button
+            onClick={() => logout()}
+            className="p-2 rounded-xl text-zinc-400 hover:text-rose-400 hover:bg-rose-950/30 border border-transparent hover:border-rose-500/30 transition-colors"
+            title={currentUser?.email ? `Logged in as ${currentUser.email}. Click to log out.` : 'Log Out'}
+          >
+            <LogOut className="w-5 h-5" />
+          </button>
         </div>
 
       </div>

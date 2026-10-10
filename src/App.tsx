@@ -10,11 +10,11 @@ import { BillScannerModal } from './components/scanner/BillScannerModal';
 import { HouseholdSettingsModal } from './components/settings/HouseholdSettingsModal';
 import { PaymentInfoModal } from './components/settlement/PaymentInfoModal';
 import { RoommateManagerModal } from './components/roommates/RoommateManagerModal';
-import { AuthModal } from './components/auth/AuthModal';
+import { AuthScreen } from './components/auth/AuthScreen';
 import { Sparkles, Receipt, SlidersHorizontal, Plus, Users, UserPlus } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
-  const { activeProfile, bills, profiles } = useHousehold();
+  const { currentUser, isAuthLoading, activeProfile, bills, profiles } = useHousehold();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'bills' | 'rules' | 'settings'>('dashboard');
 
   // Modals state
@@ -22,10 +22,23 @@ const MainAppContent: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isPaymentInfoOpen, setIsPaymentInfoOpen] = useState(false);
   const [isRoommatesOpen, setIsRoommatesOpen] = useState(false);
-  const [authModal, setAuthModal] = useState<{ isOpen: boolean; mode: 'login' | 'join' }>(() => ({
-    isOpen: new URLSearchParams(window.location.search).has('invite'),
-    mode: new URLSearchParams(window.location.search).has('invite') ? 'join' : 'login',
-  }));
+
+  // 1. Loading splash screen while session is being verified
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-[#09090b] flex flex-col items-center justify-center space-y-4">
+        <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-brand-600 via-brand-500 to-emerald-400 flex items-center justify-center text-3xl font-black text-black shadow-glow animate-pulse">
+          🏠
+        </div>
+        <p className="text-xs font-bold text-zinc-500 tracking-widest uppercase">Loading HouseSplits...</p>
+      </div>
+    );
+  }
+
+  // 2. Unauthenticated Gate: Show ONLY the login / join screen
+  if (!currentUser) {
+    return <AuthScreen />;
+  }
 
   const isAdmin = activeProfile.role === 'admin';
 
@@ -36,7 +49,6 @@ const MainAppContent: React.FC = () => {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenScanner={() => setIsScannerOpen(true)}
         onOpenRoommates={() => setIsRoommatesOpen(true)}
-        onOpenAuth={(mode = 'login') => setAuthModal({ isOpen: true, mode })}
       />
 
       {/* Main Container */}
@@ -216,11 +228,6 @@ const MainAppContent: React.FC = () => {
         onClose={() => setIsRoommatesOpen(false)}
       />
 
-      <AuthModal
-        isOpen={authModal.isOpen}
-        initialMode={authModal.mode}
-        onClose={() => setAuthModal((prev) => ({ ...prev, isOpen: false }))}
-      />
     </div>
   );
 };
