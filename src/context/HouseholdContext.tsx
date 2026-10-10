@@ -17,6 +17,7 @@ import {
 } from '../lib/initialData';
 import { notifyNewBill, notifyPaymentMade } from '../lib/webhooks';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { signOutUser, onAuthChange, getAuthSession } from '../lib/authService';
 
 interface HouseholdContextType {
   household: Household;
@@ -37,6 +38,8 @@ interface HouseholdContextType {
   updateProfile: (id: string, updates: Partial<Profile>) => void;
   removeProfile: (id: string) => void;
   regenerateInviteCode: () => string;
+  currentUser: { id: string; email: string } | null;
+  logout: () => Promise<void>;
 }
 
 const HouseholdContext = createContext<HouseholdContextType | undefined>(undefined);
@@ -70,6 +73,38 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   });
 
   const [activeProfileId, setActiveProfileId] = useState<string>('user-admin');
+  const [currentUser, setCurrentUser] = useState<{ id: string; email: string } | null>(null);
+
+  // Supabase Auth session watcher
+  useEffect(() => {
+    getAuthSession().then((session) => {
+      if (session?.user) {
+        setCurrentUser({ id: session.user.id, email: session.user.email || '' });
+        const userEmail = session.user.email?.toLowerCase();
+        const found = profiles.find((p) => p.email.toLowerCase() === userEmail || p.id === session.user.id);
+        if (found) {
+          setActiveProfileId(found.id);
+        }
+      }
+    });
+
+    const unsubscribe = onAuthChange((session) => {
+      if (session?.user) {
+        setCurrentUser({ id: session.user.id, email: session.user.email || '' });
+        const userEmail = session.user.email?.toLowerCase();
+        const found = profiles.find((p) => p.email.toLowerCase() === userEmail || p.id === session.user.id);
+        if (found) {
+          setActiveProfileId(found.id);
+        }
+      } else {
+        setCurrentUser(null);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [profiles]);
 
   useEffect(() => {
     localStorage.setItem(LS_BILLS_KEY, JSON.stringify(bills));
@@ -281,6 +316,14 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
+  const logout = async () => {
+    await signOutUser();
+    setCurrentUser(null);
+    if (profiles.length > 0) {
+      setActiveProfileId(profiles[0].id);
+    }
+  };
+
   return (
     <HouseholdContext.Provider
       value={{
@@ -302,6 +345,8 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         updateProfile,
         removeProfile,
         regenerateInviteCode,
+        currentUser,
+        logout,
       }}
     >
       {children}

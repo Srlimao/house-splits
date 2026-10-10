@@ -10,7 +10,7 @@ import { BillScannerModal } from './components/scanner/BillScannerModal';
 import { HouseholdSettingsModal } from './components/settings/HouseholdSettingsModal';
 import { PaymentInfoModal } from './components/settlement/PaymentInfoModal';
 import { RoommateManagerModal } from './components/roommates/RoommateManagerModal';
-import { JoinHouseModal } from './components/auth/JoinHouseModal';
+import { AuthModal } from './components/auth/AuthModal';
 import { Sparkles, Receipt, SlidersHorizontal, Plus, Users, UserPlus } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
@@ -22,9 +22,10 @@ const MainAppContent: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isPaymentInfoOpen, setIsPaymentInfoOpen] = useState(false);
   const [isRoommatesOpen, setIsRoommatesOpen] = useState(false);
-  const [isJoinHouseOpen, setIsJoinHouseOpen] = useState(() => {
-    return new URLSearchParams(window.location.search).has('invite');
-  });
+  const [authModal, setAuthModal] = useState<{ isOpen: boolean; mode: 'login' | 'join' }>(() => ({
+    isOpen: new URLSearchParams(window.location.search).has('invite'),
+    mode: new URLSearchParams(window.location.search).has('invite') ? 'join' : 'login',
+  }));
 
   const isAdmin = activeProfile.role === 'admin';
 
@@ -35,6 +36,7 @@ const MainAppContent: React.FC = () => {
         onOpenSettings={() => setIsSettingsOpen(true)}
         onOpenScanner={() => setIsScannerOpen(true)}
         onOpenRoommates={() => setIsRoommatesOpen(true)}
+        onOpenAuth={(mode = 'login') => setAuthModal({ isOpen: true, mode })}
       />
 
       {/* Main Container */}
@@ -214,9 +216,10 @@ const MainAppContent: React.FC = () => {
         onClose={() => setIsRoommatesOpen(false)}
       />
 
-      <JoinHouseModal
-        isOpen={isJoinHouseOpen}
-        onClose={() => setIsJoinHouseOpen(false)}
+      <AuthModal
+        isOpen={authModal.isOpen}
+        initialMode={authModal.mode}
+        onClose={() => setAuthModal((prev) => ({ ...prev, isOpen: false }))}
       />
     </div>
   );
