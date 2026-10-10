@@ -286,7 +286,7 @@ export const RoommateManagerModal: React.FC<RoommateManagerModalProps> = ({
                       {p.role}
                     </span>
 
-                    {isAdmin && p.id !== 'user-admin' && (
+                    {isAdmin && p.id !== activeProfile.id && (
                       <button
                         onClick={() => removeProfile(p.id)}
                         className="p-1.5 text-zinc-500 hover:text-rose-400 rounded-lg hover:bg-zinc-800 transition-colors"

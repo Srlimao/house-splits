@@ -37,14 +37,17 @@ export const BalanceOverview: React.FC<BalanceOverviewProps> = ({
   let myPendingConfirmation = 0;
   let myTotalSettled = 0;
 
+  const adminProfile = profiles.find((p) => p.role === 'admin');
+  const adminId = adminProfile?.id || 'user-admin';
+
   currentMonthBills.forEach((bill) => {
     if (bill.paidToProvider) {
       totalPaidByAdmin += bill.totalAmount;
     }
 
     bill.splits.forEach((split) => {
-      // Roommate owes Admin if profileId !== admin
-      const isSplitFromOtherMember = split.profileId !== 'user-admin';
+      // Roommate owes Admin if profileId is not the admin
+      const isSplitFromOtherMember = split.profileId !== adminId && split.profileId !== 'user-admin';
 
       if (isSplitFromOtherMember) {
         if (split.status === 'pending') {

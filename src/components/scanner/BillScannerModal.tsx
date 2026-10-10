@@ -116,7 +116,10 @@ export const BillScannerModal: React.FC<BillScannerModalProps> = ({ isOpen, onCl
     );
   };
 
-  const calculatedShares = calculateExactSplit(totalAmount, customShares, 'user-admin');
+  const adminProfile = profiles.find((p) => p.role === 'admin');
+  const adminId = adminProfile?.id || 'user-admin';
+
+  const calculatedShares = calculateExactSplit(totalAmount, customShares, adminId);
   const sumPercentage = customShares.reduce((acc, curr) => acc + curr.percentage, 0);
   const isValidSplit = Math.abs(sumPercentage - 100) < 0.05;
 
@@ -129,7 +132,7 @@ export const BillScannerModal: React.FC<BillScannerModalProps> = ({ isOpen, onCl
       profileId: cs.profileId,
       percentage: cs.percentage,
       amountDue: cs.amountDue,
-      status: cs.profileId === 'user-admin' ? ('confirmed_by_admin' as const) : ('pending' as const),
+      status: cs.profileId === adminId || cs.profileId === 'user-admin' ? ('confirmed_by_admin' as const) : ('pending' as const),
     }));
 
     await addBill({

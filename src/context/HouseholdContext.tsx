@@ -57,7 +57,11 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const [profiles, setProfiles] = useState<Profile[]>(() => {
     const saved = localStorage.getItem(LS_PROFILES_KEY);
-    return saved ? JSON.parse(saved) : INITIAL_PROFILES;
+    const parsed: Profile[] = saved ? JSON.parse(saved) : INITIAL_PROFILES;
+    const hasRealAdmin = parsed.some(
+      (p) => p.role === 'admin' && p.email !== 'will@example.com' && p.id !== 'user-admin'
+    );
+    return hasRealAdmin ? parsed.filter((p) => p.email !== 'will@example.com' && p.id !== 'user-admin') : parsed;
   });
 
   const [categories] = useState<BillCategory[]>(INITIAL_CATEGORIES);
@@ -156,7 +160,7 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
           if (dbProfiles && dbProfiles.length > 0) {
             setProfiles((prev) => {
-              const updated = [...prev];
+              let updated = [...prev];
               for (const dbP of dbProfiles) {
                 const idx = updated.findIndex(
                   (p) => p.email.toLowerCase() === dbP.email?.toLowerCase() || p.id === dbP.id
@@ -169,17 +173,6 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                     role: (dbP.role as 'admin' | 'member') || updated[idx].role,
                     email: dbP.email || updated[idx].email,
                   };
-                } else if (dbP.role === 'admin' || dbP.email?.toLowerCase() === 'w.back93@gmail.com') {
-                  const adminIdx = updated.findIndex((p) => p.id === 'user-admin' || p.role === 'admin');
-                  if (adminIdx >= 0) {
-                    updated[adminIdx] = {
-                      ...updated[adminIdx],
-                      id: dbP.id,
-                      fullName: dbP.full_name || 'Will (Admin)',
-                      email: dbP.email,
-                      role: 'admin',
-                    };
-                  }
                 } else {
                   updated.push({
                     id: dbP.id,
@@ -192,6 +185,27 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                   });
                 }
               }
+
+              // Hide mock system admin (will@example.com / user-admin) if a real admin exists
+              const realAdmin = updated.find(
+                (p) => p.role === 'admin' && p.email !== 'will@example.com' && p.id !== 'user-admin'
+              );
+              if (realAdmin) {
+                updated = updated.filter((p) => p.email !== 'will@example.com' && p.id !== 'user-admin');
+
+                // Remap legacy bills/splits/rules from user-admin to realAdmin.id
+                setSplitRules((prevRules) =>
+                  prevRules.map((r) => (r.profileId === 'user-admin' ? { ...r, profileId: realAdmin.id } : r))
+                );
+                setBills((prevBills) =>
+                  prevBills.map((b) => ({
+                    ...b,
+                    createdBy: b.createdBy === 'user-admin' ? realAdmin.id : b.createdBy,
+                    splits: b.splits.map((s) => (s.profileId === 'user-admin' ? { ...s, profileId: realAdmin.id } : s)),
+                  }))
+                );
+              }
+
               return updated;
             });
           }
@@ -302,6 +316,21 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   useEffect(() => {
     localStorage.setItem(LS_PROFILES_KEY, JSON.stringify(profiles));
   }, [profiles]);
+
+  // Remove mock system admin (will@example.com / user-admin) if a real admin exists
+  useEffect(() => {
+    const realAdmin = profiles.find(
+      (p) => p.role === 'admin' && p.email !== 'will@example.com' && p.id !== 'user-admin'
+    );
+    if (realAdmin) {
+      if (profiles.some((p) => p.email === 'will@example.com' || p.id === 'user-admin')) {
+        setProfiles((prev) => prev.filter((p) => p.email !== 'will@example.com' && p.id !== 'user-admin'));
+      }
+      if (activeProfileId === 'user-admin') {
+        setActiveProfileId(realAdmin.id);
+      }
+    }
+  }, [profiles, activeProfileId]);
 
   const updateHousehold = (updated: Partial<Household>) => {
     setHousehold((prev) => {
