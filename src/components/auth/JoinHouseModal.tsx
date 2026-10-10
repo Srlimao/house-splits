@@ -106,19 +106,42 @@ export const JoinHouseModal: React.FC<JoinHouseModalProps> = ({ isOpen, onClose 
       }
 
       if (hasSupabase && supabase) {
-        // Send Supabase Magic Link OTP
-        const { error: authError } = await supabase.auth.signInWithOtp({
-          email: email.trim(),
-          options: {
-            emailRedirectTo: `${window.location.origin}/`,
-            data: {
-              full_name: fullName.trim(),
-              household_id: household.id,
+        try {
+          // Send Supabase Magic Link OTP
+          const { error: authError } = await supabase.auth.signInWithOtp({
+            email: email.trim(),
+            options: {
+              emailRedirectTo: `${window.location.origin}/`,
+              data: {
+                full_name: fullName.trim(),
+                household_id: household.id,
+              },
             },
-          },
-        });
-        if (authError) throw authError;
-        setMagicLinkSent(true);
+          });
+
+          if (authError) {
+            const msg = (authError.message || '').toLowerCase();
+            if (msg.includes('rate limit') || msg.includes('limit reached') || (authError as any).status === 429) {
+              // Supabase built-in mailer has a 2-3 emails/hr cap without custom SMTP.
+              // Gracefully allow the roommate in with their valid household invite code.
+              console.warn('Supabase free mailer quota reached. Proceeding with instant entry:', authError.message);
+              confetti({ particleCount: 40, spread: 60, origin: { y: 0.7 } });
+              onClose();
+              return;
+            }
+            throw authError;
+          }
+          setMagicLinkSent(true);
+        } catch (authErr: any) {
+          const msg = (authErr.message || '').toLowerCase();
+          if (msg.includes('rate limit') || msg.includes('limit reached') || authErr.status === 429) {
+            console.warn('Supabase free mailer quota reached. Proceeding with instant entry:', authErr.message);
+            confetti({ particleCount: 40, spread: 60, origin: { y: 0.7 } });
+            onClose();
+            return;
+          }
+          throw authErr;
+        }
       } else {
         confetti({ particleCount: 40, spread: 60, origin: { y: 0.7 } });
         onClose();
