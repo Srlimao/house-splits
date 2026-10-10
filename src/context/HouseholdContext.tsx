@@ -84,6 +84,9 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const found = profiles.find((p) => p.email.toLowerCase() === userEmail || p.id === session.user.id);
         if (found) {
           setActiveProfileId(found.id);
+        } else if (userEmail === 'w.back93@gmail.com') {
+          const adminP = profiles.find((p) => p.role === 'admin' || p.id === 'user-admin');
+          if (adminP) setActiveProfileId(adminP.id);
         }
       }
     });
@@ -95,6 +98,9 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         const found = profiles.find((p) => p.email.toLowerCase() === userEmail || p.id === session.user.id);
         if (found) {
           setActiveProfileId(found.id);
+        } else if (userEmail === 'w.back93@gmail.com') {
+          const adminP = profiles.find((p) => p.role === 'admin' || p.id === 'user-admin');
+          if (adminP) setActiveProfileId(adminP.id);
         }
       } else {
         setCurrentUser(null);
@@ -141,6 +147,54 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             adminPaymentInfo: dbHouse.admin_payment_info || prev.adminPaymentInfo,
             webhookSettings: dbHouse.webhook_settings || prev.webhookSettings,
           }));
+
+          // Fetch profiles from Supabase and synchronize admin
+          const { data: dbProfiles } = await client
+            .from('profiles')
+            .select('*')
+            .eq('household_id', dbHouse.id);
+
+          if (dbProfiles && dbProfiles.length > 0) {
+            setProfiles((prev) => {
+              const updated = [...prev];
+              for (const dbP of dbProfiles) {
+                const idx = updated.findIndex(
+                  (p) => p.email.toLowerCase() === dbP.email?.toLowerCase() || p.id === dbP.id
+                );
+                if (idx >= 0) {
+                  updated[idx] = {
+                    ...updated[idx],
+                    id: dbP.id,
+                    fullName: dbP.full_name || updated[idx].fullName,
+                    role: (dbP.role as 'admin' | 'member') || updated[idx].role,
+                    email: dbP.email || updated[idx].email,
+                  };
+                } else if (dbP.role === 'admin' || dbP.email?.toLowerCase() === 'w.back93@gmail.com') {
+                  const adminIdx = updated.findIndex((p) => p.id === 'user-admin' || p.role === 'admin');
+                  if (adminIdx >= 0) {
+                    updated[adminIdx] = {
+                      ...updated[adminIdx],
+                      id: dbP.id,
+                      fullName: dbP.full_name || 'Will (Admin)',
+                      email: dbP.email,
+                      role: 'admin',
+                    };
+                  }
+                } else {
+                  updated.push({
+                    id: dbP.id,
+                    householdId: dbP.household_id,
+                    fullName: dbP.full_name,
+                    email: dbP.email,
+                    role: (dbP.role as 'admin' | 'member') || 'member',
+                    avatarUrl: dbP.avatar_url || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=128&auto=format&fit=crop&q=80',
+                    isActive: dbP.is_active ?? true,
+                  });
+                }
+              }
+              return updated;
+            });
+          }
         }
       } catch (e) {
         console.error('Error fetching household from Supabase:', e);
