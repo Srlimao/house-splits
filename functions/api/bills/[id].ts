@@ -18,6 +18,60 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
         .run();
     }
 
+    if (body.totalAmount !== undefined) {
+      await env.DB.prepare(
+        'UPDATE bills SET total_amount = ?, updated_at = datetime("now") WHERE id = ?'
+      )
+        .bind(body.totalAmount, billId)
+        .run();
+    }
+
+    // Replace full splits array if provided
+    if (body.splits && Array.isArray(body.splits)) {
+      // Find admin profile for fallback mapping if needed
+      const admin = await env.DB.prepare(
+        'SELECT p.id FROM profiles p JOIN bills b ON b.household_id = p.household_id WHERE b.id = ? AND p.role = "admin" LIMIT 1'
+      ).bind(billId).first();
+      const adminId = admin?.id as string | undefined;
+
+      // Delete existing splits for this bill
+      await env.DB.prepare('DELETE FROM bill_splits WHERE bill_id = ?').bind(billId).run();
+
+      for (const split of body.splits) {
+        let splitProfileId = split.profileId;
+        const pExists = await env.DB.prepare('SELECT id FROM profiles WHERE id = ?').bind(splitProfileId).first();
+
+        if (!pExists) {
+          if ((splitProfileId === 'user-admin' || !splitProfileId) && adminId) {
+            splitProfileId = adminId;
+          } else {
+            continue;
+          }
+        }
+
+        const splitId = split.id || crypto.randomUUID();
+        const amount = split.amountDue !== undefined ? split.amountDue : (split.amount || 0);
+
+        await env.DB.prepare(
+          `INSERT INTO bill_splits (
+            id, bill_id, profile_id, amount, percentage, status, paid_at, confirmed_at, notes
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+          .bind(
+            splitId,
+            billId,
+            splitProfileId,
+            amount,
+            split.percentage,
+            split.status || 'pending',
+            split.markedPaidAt || split.paidAt || null,
+            split.confirmedPaidAt || split.confirmedAt || null,
+            split.notes || null
+          )
+          .run();
+      }
+    }
+
     if (body.splitUpdate) {
       const { profileId, status, paidAt, markedPaidAt, confirmedAt, confirmedPaidAt, notes } = body.splitUpdate;
       await env.DB.prepare(

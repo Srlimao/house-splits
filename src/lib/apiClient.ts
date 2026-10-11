@@ -107,6 +107,15 @@ export const apiClient = {
     },
   },
 
+  categories: {
+    async getAll(householdId?: string): Promise<any[]> {
+      const url = householdId ? `/api/categories?household_id=${householdId}` : '/api/categories';
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to load categories');
+      return res.json();
+    },
+  },
+
   profiles: {
     async getAll(householdId?: string): Promise<any[]> {
       const url = householdId ? `/api/profiles?household_id=${householdId}` : '/api/profiles';

@@ -11,7 +11,15 @@ interface DueSoonListProps {
 export const DueSoonList: React.FC<DueSoonListProps> = ({ onSelectBill }) => {
   const { bills, categories, household, activeProfile } = useHousehold();
 
-  const getCategory = (catId: string) => categories.find((c) => c.id === catId);
+  const getCategory = (catId: string) =>
+    categories.find(
+      (c) =>
+        c.id === catId ||
+        c.code === catId ||
+        ('cat-' + c.code) === catId ||
+        (c.code === 'electricity' && catId === 'cat-elec') ||
+        (c.code === 'internet' && catId === 'cat-net')
+    );
 
   const getCategoryIcon = (iconName: string) => {
     switch (iconName?.toLowerCase()) {

@@ -3,6 +3,7 @@ import { useHousehold } from '../../context/HouseholdContext';
 import { formatCurrency } from '../../lib/splitCalculator';
 import { Bill } from '../../types';
 import { DocumentViewerModal } from './DocumentViewerModal';
+import { EditBillSplitsModal } from './EditBillSplitsModal';
 import {
   Zap,
   Droplet,
@@ -20,6 +21,7 @@ import {
   Download,
   Trash2,
   Calendar,
+  Sliders,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -45,11 +47,20 @@ export const BillList: React.FC<BillListProps> = ({ onOpenPaymentInfo }) => {
   const [filterStatus, setFilterStatus] = useState<'all' | 'unsettled' | 'settled'>('all');
   const [expandedBillId, setExpandedBillId] = useState<string | null>(null);
   const [viewingDocumentBill, setViewingDocumentBill] = useState<Bill | null>(null);
+  const [editingSplitsBill, setEditingSplitsBill] = useState<Bill | null>(null);
   const [billToDelete, setBillToDelete] = useState<string | null>(null);
 
   const isAdmin = activeProfile.role === 'admin';
 
-  const getCategory = (catId: string) => categories.find((c) => c.id === catId);
+  const getCategory = (catId: string) =>
+    categories.find(
+      (c) =>
+        c.id === catId ||
+        c.code === catId ||
+        ('cat-' + c.code) === catId ||
+        (c.code === 'electricity' && catId === 'cat-elec') ||
+        (c.code === 'internet' && catId === 'cat-net')
+    );
 
   const getCategoryIcon = (iconName: string) => {
     switch (iconName?.toLowerCase()) {
@@ -243,6 +254,15 @@ export const BillList: React.FC<BillListProps> = ({ onOpenPaymentInfo }) => {
                       </span>
                     </div>
 
+                    {/* Edit Splits Button */}
+                    <button
+                      onClick={() => setEditingSplitsBill(bill)}
+                      className="p-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 hover:text-brand-400 border border-zinc-700/60 transition-colors"
+                      title="Edit Roommate Splits Allocation"
+                    >
+                      <Sliders className="w-4 h-4" />
+                    </button>
+
                     {/* View/Download Document Button */}
                     <button
                       onClick={() => setViewingDocumentBill(bill)}
@@ -278,14 +298,23 @@ export const BillList: React.FC<BillListProps> = ({ onOpenPaymentInfo }) => {
                   <div className="px-4 pb-4 sm:px-5 sm:pb-5 pt-2 border-t border-zinc-800/80 bg-zinc-950/40 space-y-3">
                     <div className="flex items-center justify-between text-xs text-zinc-400 font-semibold uppercase tracking-wider">
                       <span>Roommate Breakdown</span>
-                      {isAdmin && (
+                      <div className="flex items-center gap-3">
                         <button
-                          onClick={() => togglePaidToProvider(bill.id)}
-                          className="text-[11px] font-medium text-brand-400 hover:underline"
+                          onClick={() => setEditingSplitsBill(bill)}
+                          className="flex items-center gap-1 text-[11px] font-medium text-brand-400 hover:underline"
                         >
-                          {bill.paidToProvider ? 'Unmark Provider Payment' : 'Mark Paid to Provider'}
+                          <Sliders className="w-3 h-3" />
+                          <span>Edit Splits</span>
                         </button>
-                      )}
+                        {isAdmin && (
+                          <button
+                            onClick={() => togglePaidToProvider(bill.id)}
+                            className="text-[11px] font-medium text-zinc-400 hover:text-white"
+                          >
+                            {bill.paidToProvider ? 'Unmark Provider Payment' : 'Mark Paid to Provider'}
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="space-y-2">
@@ -401,6 +430,15 @@ export const BillList: React.FC<BillListProps> = ({ onOpenPaymentInfo }) => {
         category={viewingDocumentBill ? getCategory(viewingDocumentBill.categoryId) : undefined}
         onClose={() => setViewingDocumentBill(null)}
       />
+
+      {/* Edit Bill Splits Modal */}
+      {editingSplitsBill && (
+        <EditBillSplitsModal
+          isOpen={Boolean(editingSplitsBill)}
+          onClose={() => setEditingSplitsBill(null)}
+          bill={editingSplitsBill}
+        />
+      )}
     </div>
   );
 };
