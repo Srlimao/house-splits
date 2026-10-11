@@ -323,13 +323,13 @@ export const RoommateManagerModal: React.FC<RoommateManagerModalProps> = ({
           </div>
         </div>
 
-        {/* Supabase Auth Explanation Banner */}
+        {/* Cloudflare Native Auth Explanation Banner */}
         <div className="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800/80 flex items-start gap-2.5 text-xs text-zinc-400">
           <Info className="w-4 h-4 text-brand-400 shrink-0 mt-0.5" />
           <div className="space-y-1">
             <p className="font-semibold text-zinc-200">How Login & Roommate Accounts Work:</p>
             <p className="leading-relaxed">
-              When using <strong>Supabase</strong> in production, roommates open your invite link on their phones, click <strong>"Sign in with Google / Magic Link"</strong>, and enter your household code. Their user account is automatically bound to your house with Member access.
+              When using <strong>Cloudflare Native Auth</strong> in production, roommates open your invite link on their phones, create an account with email and password, and enter your household code. Their user account is automatically bound to your house with Member access.
             </p>
           </div>
         </div>

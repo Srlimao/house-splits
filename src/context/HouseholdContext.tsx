@@ -33,6 +33,7 @@ interface HouseholdContextType {
   markSplitPaidToAdmin: (billId: string, profileId: string, notes?: string) => void;
   confirmSplitPayment: (billId: string, profileId: string) => void;
   updateBillSplits: (billId: string, updatedSplits: BillSplit[], newTotalAmount?: number) => Promise<void>;
+  updateBill: (billId: string, updates: Partial<Bill>) => Promise<void>;
   updateSplitRules: (categoryId: string, updatedShares: { profileId: string; percentage: number }[]) => void;
   updateHousehold: (updated: Partial<Household>) => void;
   addProfile: (profile: Omit<Profile, 'id' | 'householdId'>) => Profile;
@@ -525,6 +526,17 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
+  const updateBill = async (billId: string, updates: Partial<Bill>): Promise<void> => {
+    setBills((prev) =>
+      prev.map((b) => (b.id === billId ? { ...b, ...updates } : b))
+    );
+    try {
+      await apiClient.bills.update(billId, updates);
+    } catch (err) {
+      console.warn('Could not update bill in D1:', err);
+    }
+  };
+
   const updateSplitRules = (
     categoryId: string,
     updatedShares: { profileId: string; percentage: number }[]
@@ -649,6 +661,7 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         markSplitPaidToAdmin,
         confirmSplitPayment,
         updateBillSplits,
+        updateBill,
         updateSplitRules,
         updateHousehold,
         addProfile,

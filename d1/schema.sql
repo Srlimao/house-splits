@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS bills (
     period_end TEXT,
     file_path TEXT,
     file_type TEXT,
+    file_name TEXT,
     paid_to_provider INTEGER DEFAULT 0,
     paid_to_provider_at TEXT,
     created_by TEXT REFERENCES profiles(id) ON DELETE SET NULL,

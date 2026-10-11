@@ -254,11 +254,11 @@ export const BillList: React.FC<BillListProps> = ({ onOpenPaymentInfo }) => {
                       </span>
                     </div>
 
-                    {/* Edit Splits Button */}
+                    {/* Edit Splits & Document Button */}
                     <button
                       onClick={() => setEditingSplitsBill(bill)}
                       className="p-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-800 text-zinc-300 hover:text-brand-400 border border-zinc-700/60 transition-colors"
-                      title="Edit Roommate Splits Allocation"
+                      title="Edit Bill Details, Document & Splits"
                     >
                       <Sliders className="w-4 h-4" />
                     </button>

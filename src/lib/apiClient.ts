@@ -10,6 +10,13 @@ export interface UserSession {
   avatarUrl?: string;
 }
 
+export interface UploadFileResult {
+  url: string;
+  key: string;
+  fileName: string;
+  fileType: string;
+}
+
 export const apiClient = {
   auth: {
     async login(email: string, password: string): Promise<{ user: UserSession; token: string }> {
@@ -183,15 +190,89 @@ export const apiClient = {
     },
   },
 
-  async uploadFile(file: File): Promise<{ url: string; key: string }> {
-    const formData = new FormData();
-    formData.append('file', file);
-    const res = await fetch('/api/upload', {
-      method: 'POST',
-      body: formData,
+  async uploadFile(file: File): Promise<UploadFileResult> {
+    // 1. Try Cloudflare Pages /api/upload (if Cloudflare R2 bucket is bound)
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.url) {
+          return {
+            url: data.url,
+            key: data.key || file.name,
+            fileName: data.fileName || file.name,
+            fileType: data.fileType || file.type || 'application/octet-stream',
+          };
+        }
+      }
+    } catch {
+      // Continue to Cloudflare D1 Data URL storage
+    }
+
+    // 2. Cloudflare D1 Native Storage: Convert file to Base64 Data URL
+    // For images, optimize dimensions to keep D1 rows fast and lightweight
+    if (file.type.startsWith('image/')) {
+      try {
+        const optimizedDataUrl = await new Promise<string>((resolve, reject) => {
+          const img = new Image();
+          const objectUrl = URL.createObjectURL(file);
+          img.onload = () => {
+            URL.revokeObjectURL(objectUrl);
+            const MAX_DIM = 1600;
+            let { width, height } = img;
+            if (width > MAX_DIM || height > MAX_DIM) {
+              if (width > height) {
+                height = Math.round((height * MAX_DIM) / width);
+                width = MAX_DIM;
+              } else {
+                width = Math.round((width * MAX_DIM) / height);
+                height = MAX_DIM;
+              }
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return resolve('');
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL(file.type === 'image/png' ? 'image/png' : 'image/jpeg', 0.85);
+            resolve(dataUrl);
+          };
+          img.onerror = reject;
+          img.src = objectUrl;
+        });
+
+        if (optimizedDataUrl) {
+          return {
+            url: optimizedDataUrl,
+            key: file.name,
+            fileName: file.name,
+            fileType: file.type || 'image/jpeg',
+          };
+        }
+      } catch {
+        // Fallback to raw FileReader if canvas optimization fails
+      }
+    }
+
+    // PDF or raw file Data URL for Cloudflare D1 persistence
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        resolve({
+          url: reader.result as string,
+          key: file.name,
+          fileName: file.name,
+          fileType: file.type || 'application/octet-stream',
+        });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Upload failed');
-    return data;
   },
 };

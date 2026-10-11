@@ -159,7 +159,7 @@ Rules:
 
 ---
 
-## 6. Database Schema (Supabase PostgreSQL)
+## 6. Database Schema (Cloudflare D1 SQLite)
 
 ### 6.1 Entity Relationship Overview
 ```mermaid

@@ -58,6 +58,8 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       periodEnd: b.period_end,
       filePath: b.file_path,
       fileType: b.file_type,
+      fileName: b.file_name || (b.file_path && !b.file_path.startsWith('data:') ? b.file_path.split('/').pop()?.split('?')[0] : undefined),
+      fileDataUrl: b.file_path && b.file_path.startsWith('data:') ? b.file_path : undefined,
       paidToProvider: Boolean(b.paid_to_provider),
       paidToProviderAt: b.paid_to_provider_at,
       createdBy: b.created_by,
@@ -151,13 +153,18 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
       }
     }
 
-    // 4. Insert bill record
+    // 4. Resolve file parameters
+    const filePath = bill.filePath || bill.fileDataUrl || null;
+    const fileType = bill.fileType || null;
+    const fileName = bill.fileName || (typeof filePath === 'string' && !filePath.startsWith('data:') ? filePath.split('/').pop()?.split('?')[0] : null);
+
+    // Insert bill record
     await env.DB.prepare(
       `INSERT INTO bills (
         id, household_id, category_id, provider_name, invoice_number, total_amount, currency,
-        issue_date, due_date, period_start, period_end, file_path, file_type, paid_to_provider,
+        issue_date, due_date, period_start, period_end, file_path, file_type, file_name, paid_to_provider,
         paid_to_provider_at, created_by, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         newId,
@@ -171,8 +178,9 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         bill.dueDate,
         bill.periodStart || null,
         bill.periodEnd || null,
-        bill.filePath || null,
-        bill.fileType || null,
+        filePath,
+        fileType,
+        fileName,
         bill.paidToProvider ? 1 : 0,
         bill.paidToProviderAt || null,
         createdBy || null,

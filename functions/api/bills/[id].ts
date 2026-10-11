@@ -26,6 +26,42 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
         .run();
     }
 
+    if (body.providerName !== undefined) {
+      await env.DB.prepare(
+        'UPDATE bills SET provider_name = ?, updated_at = datetime("now") WHERE id = ?'
+      )
+        .bind(body.providerName, billId)
+        .run();
+    }
+
+    if (body.dueDate !== undefined) {
+      await env.DB.prepare(
+        'UPDATE bills SET due_date = ?, updated_at = datetime("now") WHERE id = ?'
+      )
+        .bind(body.dueDate, billId)
+        .run();
+    }
+
+    if (body.invoiceNumber !== undefined) {
+      await env.DB.prepare(
+        'UPDATE bills SET invoice_number = ?, updated_at = datetime("now") WHERE id = ?'
+      )
+        .bind(body.invoiceNumber || null, billId)
+        .run();
+    }
+
+    if (body.filePath !== undefined || body.fileName !== undefined || body.fileType !== undefined) {
+      const filePath = body.filePath || body.fileDataUrl || null;
+      const fileType = body.fileType || null;
+      const fileName = body.fileName || (typeof filePath === 'string' && !filePath.startsWith('data:') ? filePath.split('/').pop()?.split('?')[0] : null);
+
+      await env.DB.prepare(
+        'UPDATE bills SET file_path = ?, file_type = ?, file_name = ?, updated_at = datetime("now") WHERE id = ?'
+      )
+        .bind(filePath, fileType, fileName, billId)
+        .run();
+    }
+
     // Replace full splits array if provided
     if (body.splits && Array.isArray(body.splits)) {
       // Find admin profile for fallback mapping if needed

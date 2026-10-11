@@ -1,7 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import { X, Plus, Trash2, Users, AlertCircle, Scale, Check } from 'lucide-react';
+import {
+  X,
+  Plus,
+  Trash2,
+  AlertCircle,
+  Scale,
+  Check,
+  FileText,
+  Upload,
+  FileCheck,
+  Loader2,
+  Calendar,
+  Building,
+  Edit3,
+} from 'lucide-react';
 import { Bill, BillSplit, SplitStatus } from '../../types';
 import { useHousehold } from '../../context/HouseholdContext';
+import { apiClient } from '../../lib/apiClient';
 
 interface EditBillSplitsModalProps {
   isOpen: boolean;
@@ -23,15 +38,36 @@ export const EditBillSplitsModal: React.FC<EditBillSplitsModalProps> = ({
   onClose,
   bill,
 }) => {
-  const { profiles, household, updateBillSplits } = useHousehold();
+  const { profiles, updateBillSplits, updateBill } = useHousehold();
+
+  // Basic Bill Details
+  const [providerName, setProviderName] = useState<string>(bill.providerName);
+  const [dueDate, setDueDate] = useState<string>(bill.dueDate);
+  const [invoiceNumber, setInvoiceNumber] = useState<string>(bill.invoiceNumber || '');
   const [totalAmount, setTotalAmount] = useState<number>(bill.totalAmount);
+
+  // File Management State
+  const [newFile, setNewFile] = useState<File | null>(null);
+  const [newFileDataUrl, setNewFileDataUrl] = useState<string | null>(null);
+  const [fileAction, setFileAction] = useState<'keep' | 'replace' | 'remove'>('keep');
+
+  // Splits State
   const [shares, setShares] = useState<ShareRow[]>([]);
   const [isSaving, setIsSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Initialize shares from the bill's existing splits
+  // Initialize from the bill's existing data
   useEffect(() => {
     if (bill) {
+      setProviderName(bill.providerName);
+      setDueDate(bill.dueDate);
+      setInvoiceNumber(bill.invoiceNumber || '');
       setTotalAmount(bill.totalAmount);
+      setNewFile(null);
+      setNewFileDataUrl(null);
+      setFileAction('keep');
+      setErrorMessage(null);
+
       const initialShares: ShareRow[] = bill.splits.map((s) => ({
         id: s.id,
         profileId: s.profileId,
@@ -45,6 +81,13 @@ export const EditBillSplitsModal: React.FC<EditBillSplitsModalProps> = ({
   }, [bill]);
 
   if (!isOpen) return null;
+
+  const currentExistingFileName =
+    bill.fileName ||
+    (bill.filePath && !bill.filePath.startsWith('data:')
+      ? bill.filePath.split('/').pop()?.split('?')[0]
+      : null);
+  const hasExistingDocument = Boolean(bill.filePath || bill.fileDataUrl);
 
   // Active roommates in household that are not in current split
   const includedProfileIds = new Set(shares.map((s) => s.profileId));
@@ -140,11 +183,40 @@ export const EditBillSplitsModal: React.FC<EditBillSplitsModalProps> = ({
     );
   };
 
+  const handleSelectNewFile = (selectedFile: File) => {
+    setNewFile(selectedFile);
+    setFileAction('replace');
+    const reader = new FileReader();
+    reader.onload = () => setNewFileDataUrl(reader.result as string);
+    reader.readAsDataURL(selectedFile);
+  };
+
   const handleSave = async () => {
-    if (!isValidSplit) return;
+    if (!isValidSplit || totalAmount <= 0) return;
     setIsSaving(true);
+    setErrorMessage(null);
 
     try {
+      // 1. Process document upload or removal without touching splits
+      let updatedFilePath: string | undefined = undefined;
+      let updatedFileType: string | undefined = undefined;
+      let updatedFileName: string | undefined = undefined;
+      let updatedFileDataUrl: string | undefined = undefined;
+
+      if (fileAction === 'replace' && newFile) {
+        const uploadRes = await apiClient.uploadFile(newFile);
+        updatedFilePath = uploadRes.url;
+        updatedFileType = uploadRes.fileType || newFile.type;
+        updatedFileName = uploadRes.fileName || newFile.name;
+        updatedFileDataUrl = newFileDataUrl || undefined;
+      } else if (fileAction === 'remove') {
+        updatedFilePath = '';
+        updatedFileType = '';
+        updatedFileName = '';
+        updatedFileDataUrl = '';
+      }
+
+      // 2. Prepare splits (preserved exactly as configured)
       const updatedSplits: BillSplit[] = shares.map((s) => ({
         id: s.id || `split-${Date.now()}-${s.profileId}`,
         billId: bill.id,
@@ -155,28 +227,55 @@ export const EditBillSplitsModal: React.FC<EditBillSplitsModalProps> = ({
         notes: s.notes,
       }));
 
+      // 3. Update splits & total amount
       await updateBillSplits(bill.id, updatedSplits, totalAmount);
+
+      // 4. Update bill details and file attachment
+      const billUpdates: Partial<Bill> = {
+        providerName: providerName.trim() || bill.providerName,
+        dueDate,
+        invoiceNumber: invoiceNumber.trim() || undefined,
+        totalAmount,
+      };
+
+      if (updatedFilePath !== undefined) {
+        billUpdates.filePath = updatedFilePath || undefined;
+        billUpdates.fileType = updatedFileType || undefined;
+        billUpdates.fileName = updatedFileName || undefined;
+        billUpdates.fileDataUrl = updatedFileDataUrl || undefined;
+      }
+
+      await updateBill(bill.id, billUpdates);
+
       onClose();
-    } catch (err) {
-      console.error('Failed to update splits:', err);
+    } catch (err: any) {
+      console.error('Failed to update bill:', err);
+      setErrorMessage(err.message || 'Error updating bill details.');
     } finally {
       setIsSaving(false);
     }
   };
 
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
       <div className="relative w-full max-w-xl rounded-2xl bg-zinc-900 border border-zinc-800 shadow-2xl overflow-hidden my-8">
+        
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-zinc-800 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="p-2 rounded-xl bg-brand-500/10 text-brand-400 border border-brand-500/20">
-              <Users className="w-5 h-5" />
+              <Edit3 className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-white text-base">Edit Bill Split Allocations</h3>
+              <h3 className="font-bold text-white text-base">Edit Bill & Splits</h3>
               <p className="text-xs text-zinc-400">
-                {bill.providerName} {bill.invoiceNumber ? `• ${bill.invoiceNumber}` : ''}
+                {bill.providerName} • {bill.currency === 'EUR' ? '€' : '$'}{bill.totalAmount.toFixed(2)}
               </p>
             </div>
           </div>
@@ -190,6 +289,133 @@ export const EditBillSplitsModal: React.FC<EditBillSplitsModalProps> = ({
 
         {/* Content */}
         <div className="p-4 sm:p-5 space-y-4">
+          
+          {/* Bill Basic Info (Provider & Due Date) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] font-semibold text-zinc-400 uppercase mb-1">
+                Provider Name
+              </label>
+              <div className="relative">
+                <Building className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-2.5" />
+                <input
+                  type="text"
+                  required
+                  value={providerName}
+                  onChange={(e) => setProviderName(e.target.value)}
+                  placeholder="Provider name"
+                  className="w-full bg-zinc-950/80 border border-zinc-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-brand-500"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-semibold text-zinc-400 uppercase mb-1">
+                Payment Due Date
+              </label>
+              <div className="relative">
+                <Calendar className="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-2.5" />
+                <input
+                  type="date"
+                  required
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  className="w-full bg-zinc-950/80 border border-zinc-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-zinc-100 focus:outline-none focus:border-brand-500"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Original Invoice Document Section */}
+          <div className="p-3.5 rounded-xl bg-zinc-950/70 border border-zinc-800 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
+                <FileText className="w-4 h-4 text-brand-400" />
+                <span>Invoice Document File</span>
+              </span>
+              <span className="text-[10px] text-zinc-500">
+                Upload without changing splits
+              </span>
+            </div>
+
+            {/* Document States */}
+            {fileAction === 'replace' && newFile ? (
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-brand-500/10 border border-brand-500/30 text-xs">
+                <div className="flex items-center gap-2 truncate">
+                  <FileCheck className="w-4 h-4 text-brand-400 shrink-0" />
+                  <span className="font-semibold text-brand-300 truncate">{newFile.name}</span>
+                  <span className="text-[10px] text-brand-400/80 shrink-0">({formatFileSize(newFile.size)})</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewFile(null);
+                    setNewFileDataUrl(null);
+                    setFileAction('keep');
+                  }}
+                  className="text-xs text-zinc-400 hover:text-rose-400 font-semibold px-2 py-0.5 rounded transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : fileAction === 'remove' ? (
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-rose-950/40 border border-rose-500/30 text-xs text-rose-300">
+                <span>Document will be removed when you save</span>
+                <button
+                  type="button"
+                  onClick={() => setFileAction('keep')}
+                  className="text-xs font-semibold underline hover:text-white"
+                >
+                  Undo
+                </button>
+              </div>
+            ) : hasExistingDocument ? (
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-zinc-900 border border-zinc-800 text-xs">
+                <div className="flex items-center gap-2 truncate">
+                  <FileText className="w-4 h-4 text-zinc-400 shrink-0" />
+                  <span className="font-medium text-zinc-200 truncate">
+                    {currentExistingFileName || 'Attached Invoice Document'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <label className="text-brand-400 hover:underline text-xs font-semibold cursor-pointer">
+                    <span>Replace Document</span>
+                    <input
+                      type="file"
+                      accept="image/*,application/pdf"
+                      onChange={(e) => e.target.files?.[0] && handleSelectNewFile(e.target.files[0])}
+                      className="hidden"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFileAction('remove')}
+                    className="p-1 rounded text-zinc-500 hover:text-rose-400 transition-colors"
+                    title="Remove document attachment"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between p-2.5 rounded-lg bg-zinc-900/60 border border-dashed border-zinc-700/80 text-xs">
+                <span className="text-zinc-500 text-[11px]">
+                  No document attached to this bill yet
+                </span>
+                <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-500/10 hover:bg-brand-500/20 text-brand-400 border border-brand-500/30 font-semibold cursor-pointer transition-colors">
+                  <Upload className="w-3.5 h-3.5" />
+                  <span>Upload Bill File (PDF / Image)</span>
+                  <input
+                    type="file"
+                    accept="image/*,application/pdf"
+                    onChange={(e) => e.target.files?.[0] && handleSelectNewFile(e.target.files[0])}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            )}
+          </div>
+
           {/* Bill Total Amount Adjustment */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-zinc-950/60 border border-zinc-800/80">
             <div>
@@ -197,7 +423,7 @@ export const EditBillSplitsModal: React.FC<EditBillSplitsModalProps> = ({
                 Total Bill Amount
               </label>
               <span className="text-[11px] text-zinc-500">
-                Updating this updates split shares proportionally
+                Updating amount scales split amounts proportionally
               </span>
             </div>
             <div className="relative w-full sm:w-44">
@@ -243,7 +469,7 @@ export const EditBillSplitsModal: React.FC<EditBillSplitsModalProps> = ({
           </div>
 
           {/* Splits List */}
-          <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
             {shares.map((share) => {
               const profile = profiles.find((p) => p.id === share.profileId);
               const displayName = profile?.fullName || 'Roommate';
@@ -251,7 +477,7 @@ export const EditBillSplitsModal: React.FC<EditBillSplitsModalProps> = ({
               return (
                 <div
                   key={share.profileId}
-                  className="flex items-center justify-between p-3 rounded-xl bg-zinc-950/70 border border-zinc-800 text-xs gap-3"
+                  className="flex items-center justify-between p-2.5 rounded-xl bg-zinc-950/70 border border-zinc-800 text-xs gap-3"
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
                     <img
@@ -337,6 +563,14 @@ export const EditBillSplitsModal: React.FC<EditBillSplitsModalProps> = ({
             </div>
           )}
 
+          {/* Error Message */}
+          {errorMessage && (
+            <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
           {/* Validation Status Footer */}
           <div className="p-3 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center justify-between text-xs">
             <div>
@@ -369,12 +603,12 @@ export const EditBillSplitsModal: React.FC<EditBillSplitsModalProps> = ({
           </button>
           <button
             type="button"
-            disabled={!isValidSplit || isSaving}
+            disabled={!isValidSplit || isSaving || totalAmount <= 0}
             onClick={handleSave}
-            className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-brand-500 hover:bg-brand-400 disabled:opacity-40 disabled:pointer-events-none text-black font-bold text-xs transition-colors"
+            className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-brand-500 hover:bg-brand-400 disabled:opacity-40 disabled:pointer-events-none text-black font-bold text-xs transition-colors shadow-glow"
           >
-            <Check className="w-4 h-4" />
-            <span>{isSaving ? 'Saving...' : 'Save Split Changes'}</span>
+            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            <span>{isSaving ? 'Saving Changes...' : 'Save Changes'}</span>
           </button>
         </div>
       </div>

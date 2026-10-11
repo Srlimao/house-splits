@@ -21,6 +21,8 @@ import {
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
+import { apiClient } from '../../lib/apiClient';
+
 interface BillScannerModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -35,6 +37,7 @@ export const BillScannerModal: React.FC<BillScannerModalProps> = ({ isOpen, onCl
   const [file, setFile] = useState<File | null>(null);
   const [fileDataUrl, setFileDataUrl] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [scanStep, setScanStep] = useState<string>('');
   const [scanError, setScanError] = useState<string | null>(null);
 
@@ -186,41 +189,68 @@ export const BillScannerModal: React.FC<BillScannerModalProps> = ({ isOpen, onCl
   const excludedProfiles = profiles.filter((p) => !includedProfileIds.has(p.id));
 
   const handleConfirm = async () => {
-    if (!providerName || totalAmount <= 0) return;
+    if (!providerName || totalAmount <= 0 || isSaving) return;
 
-    const splits = calculatedShares.map((cs) => ({
-      id: `split-${Date.now()}-${cs.profileId}`,
-      billId: '',
-      profileId: cs.profileId,
-      percentage: cs.percentage,
-      amountDue: cs.amountDue,
-      status: cs.profileId === adminId || cs.profileId === 'user-admin' ? ('confirmed_by_admin' as const) : ('pending' as const),
-    }));
+    setIsSaving(true);
+    setScanError(null);
 
-    await addBill({
-      householdId: household.id,
-      categoryId,
-      providerName,
-      invoiceNumber: invoiceNumber || undefined,
-      totalAmount,
-      currency: household.currency,
-      dueDate,
-      issueDate: issueDate || undefined,
-      fileName: file ? file.name : undefined,
-      fileDataUrl: fileDataUrl || undefined,
-      paidToProvider: true,
-      paidToProviderAt: new Date().toISOString(),
-      createdBy: activeProfile.id,
-      splits,
-    });
+    try {
+      let uploadedFilePath: string | undefined = undefined;
+      let uploadedFileType: string | undefined = file?.type;
+      let uploadedFileName: string | undefined = file?.name;
 
-    confetti({
-      particleCount: 50,
-      spread: 60,
-      origin: { y: 0.7 },
-    });
+      if (file) {
+        try {
+          const uploadResult = await apiClient.uploadFile(file);
+          uploadedFilePath = uploadResult.url;
+          uploadedFileType = uploadResult.fileType || file.type;
+          uploadedFileName = uploadResult.fileName || file.name;
+        } catch (uploadErr) {
+          console.warn('Failed to upload file to storage, using data URL fallback:', uploadErr);
+          uploadedFilePath = fileDataUrl || undefined;
+        }
+      }
 
-    onClose();
+      const splits = calculatedShares.map((cs) => ({
+        id: `split-${Date.now()}-${cs.profileId}`,
+        billId: '',
+        profileId: cs.profileId,
+        percentage: cs.percentage,
+        amountDue: cs.amountDue,
+        status: cs.profileId === adminId || cs.profileId === 'user-admin' ? ('confirmed_by_admin' as const) : ('pending' as const),
+      }));
+
+      await addBill({
+        householdId: household.id,
+        categoryId,
+        providerName,
+        invoiceNumber: invoiceNumber || undefined,
+        totalAmount,
+        currency: household.currency,
+        dueDate,
+        issueDate: issueDate || undefined,
+        filePath: uploadedFilePath,
+        fileType: uploadedFileType,
+        fileName: uploadedFileName,
+        fileDataUrl: fileDataUrl || undefined,
+        paidToProvider: true,
+        paidToProviderAt: new Date().toISOString(),
+        createdBy: activeProfile.id,
+        splits,
+      });
+
+      confetti({
+        particleCount: 50,
+        spread: 60,
+        origin: { y: 0.7 },
+      });
+
+      onClose();
+    } catch (err: any) {
+      setScanError(err.message || 'Error saving bill');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const showForm = entryMode === 'manual' || (entryMode === 'ai_scan' && file && !isScanning);
@@ -567,11 +597,11 @@ export const BillScannerModal: React.FC<BillScannerModalProps> = ({ isOpen, onCl
               <button
                 type="button"
                 onClick={handleConfirm}
-                disabled={!isValidSplit || totalAmount <= 0 || !providerName.trim()}
+                disabled={!isValidSplit || totalAmount <= 0 || !providerName.trim() || isSaving}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-brand-500 hover:bg-brand-400 disabled:opacity-50 disabled:cursor-not-allowed text-black font-bold text-xs shadow-glow transition-all"
               >
-                <Check className="w-4 h-4" />
-                <span>Save Bill & Generate Splits</span>
+                {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                <span>{isSaving ? 'Uploading & Saving...' : 'Save Bill & Generate Splits'}</span>
               </button>
             </div>
           </div>
