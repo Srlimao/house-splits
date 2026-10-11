@@ -101,3 +101,16 @@ CREATE TABLE IF NOT EXISTS payments (
     confirmed_at TEXT,
     created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- 8. Push Subscriptions (Web Push / PWA Android Notifications)
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id TEXT PRIMARY KEY,
+    profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    household_id TEXT REFERENCES households(id) ON DELETE CASCADE,
+    endpoint TEXT NOT NULL UNIQUE,
+    p256dh TEXT NOT NULL,
+    auth TEXT NOT NULL,
+    user_agent TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
