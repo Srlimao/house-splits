@@ -12,11 +12,13 @@ import { PaymentInfoModal } from './components/settlement/PaymentInfoModal';
 import { RoommateManagerModal } from './components/roommates/RoommateManagerModal';
 import { AuthScreen } from './components/auth/AuthScreen';
 import { SystemManagerPortal } from './components/system/SystemManagerPortal';
-import { Sparkles, Receipt, SlidersHorizontal, Plus, Users, UserPlus, ArrowLeft } from 'lucide-react';
+import { SplitsTracker } from './components/settlement/SplitsTracker';
+import { RoommateSettlementSummary } from './components/dashboard/RoommateSettlementSummary';
+import { Sparkles, Receipt, SlidersHorizontal, Plus, Users, UserPlus, ArrowLeft, Wallet } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
   const { currentUser, isAuthLoading, isSystemManager, activeProfile, bills, profiles, household } = useHousehold();
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'bills' | 'rules' | 'settings'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'bills' | 'splits' | 'rules' | 'settings'>('dashboard');
   const [inspectingHouseholdId, setInspectingHouseholdId] = useState<string | null>(null);
 
   // Modals state
@@ -48,6 +50,13 @@ const MainAppContent: React.FC = () => {
   }
 
   const isAdmin = activeProfile.role === 'admin' || isSystemManager;
+
+  let awaitingConfirmationCount = 0;
+  bills.forEach((b) => {
+    b.splits.forEach((s) => {
+      if (s.status === 'paid_to_admin') awaitingConfirmationCount++;
+    });
+  });
 
   return (
     <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col pb-24 sm:pb-12">
@@ -104,6 +113,22 @@ const MainAppContent: React.FC = () => {
               </span>
             </button>
             <button
+              onClick={() => setActiveTab('splits')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                activeTab === 'splits'
+                  ? 'bg-zinc-800 text-white shadow-sm'
+                  : 'text-zinc-400 hover:text-zinc-200'
+              }`}
+            >
+              <Wallet className="w-3.5 h-3.5" />
+              <span>Splits Tracker</span>
+              {awaitingConfirmationCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-400 text-[10px] font-bold animate-pulse">
+                  {awaitingConfirmationCount}
+                </span>
+              )}
+            </button>
+            <button
               onClick={() => setActiveTab('rules')}
               className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
                 activeTab === 'rules'
@@ -134,6 +159,11 @@ const MainAppContent: React.FC = () => {
             <BalanceOverview
               onOpenPaymentInfo={() => setIsPaymentInfoOpen(true)}
               onOpenScanner={() => setIsScannerOpen(true)}
+            />
+
+            <RoommateSettlementSummary
+              onOpenSplitsTracker={() => setActiveTab('splits')}
+              onOpenPaymentInfo={() => setIsPaymentInfoOpen(true)}
             />
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -206,6 +236,10 @@ const MainAppContent: React.FC = () => {
 
         {activeTab === 'bills' && (
           <BillList onOpenPaymentInfo={() => setIsPaymentInfoOpen(true)} />
+        )}
+
+        {activeTab === 'splits' && (
+          <SplitsTracker onOpenPaymentInfo={() => setIsPaymentInfoOpen(true)} />
         )}
 
         {activeTab === 'rules' && <SplitRulesManager />}

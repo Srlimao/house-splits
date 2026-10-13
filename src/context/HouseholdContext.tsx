@@ -32,6 +32,14 @@ interface HouseholdContextType {
   togglePaidToProvider: (billId: string) => void;
   markSplitPaidToAdmin: (billId: string, profileId: string, notes?: string) => void;
   confirmSplitPayment: (billId: string, profileId: string) => void;
+  setSplitStatus: (
+    billId: string,
+    profileId: string,
+    status: SplitStatus,
+    options?: { notes?: string; paidAt?: string; confirmedAt?: string }
+  ) => Promise<void>;
+  revertSplitToPending: (billId: string, profileId: string) => Promise<void>;
+  confirmAllPendingSplits: () => Promise<number>;
   updateBillSplits: (billId: string, updatedSplits: BillSplit[], newTotalAmount?: number) => Promise<void>;
   updateBill: (billId: string, updates: Partial<Bill>) => Promise<void>;
   updateSplitRules: (categoryId: string, updatedShares: { profileId: string; percentage: number }[]) => void;
@@ -434,7 +442,12 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }).catch((err) => console.warn('Could not update bill in D1:', err));
   };
 
-  const markSplitPaidToAdmin = (billId: string, profileId: string, notes?: string) => {
+  const setSplitStatus = async (
+    billId: string,
+    profileId: string,
+    status: SplitStatus,
+    options?: { notes?: string; paidAt?: string; confirmedAt?: string }
+  ) => {
     const nowIso = new Date().toISOString();
 
     setBills((prev) =>
@@ -444,58 +457,76 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
           if (s.profileId !== profileId) return s;
           return {
             ...s,
-            status: 'paid_to_admin' as SplitStatus,
-            markedPaidAt: nowIso,
-            notes: notes || s.notes,
+            status,
+            markedPaidAt:
+              status === 'pending'
+                ? undefined
+                : status === 'confirmed_by_admin'
+                ? s.markedPaidAt || options?.paidAt || nowIso
+                : options?.paidAt || nowIso,
+            confirmedPaidAt:
+              status === 'confirmed_by_admin'
+                ? options?.confirmedAt || nowIso
+                : undefined,
+            notes: options?.notes !== undefined ? options?.notes : s.notes,
           };
         });
         return { ...b, splits };
       })
     );
 
-    apiClient.bills.update(billId, {
-      splitUpdate: {
-        profileId,
-        status: 'paid_to_admin',
-        markedPaidAt: nowIso,
-        notes,
-      },
-    }).catch((err) => console.warn('Could not update split in D1:', err));
+    try {
+      await apiClient.bills.update(billId, {
+        splitUpdate: {
+          profileId,
+          status,
+          markedPaidAt: status === 'pending' ? null : (options?.paidAt || nowIso),
+          confirmedPaidAt: status === 'confirmed_by_admin' ? (options?.confirmedAt || nowIso) : null,
+          notes: options?.notes,
+          resetTimestamps: status === 'pending',
+        },
+      });
+    } catch (err) {
+      console.warn('Could not update split in D1:', err);
+    }
 
-    const payer = profiles.find((p) => p.id === profileId);
-    const targetBill = bills.find((b) => b.id === billId);
-    const splitAmount = targetBill?.splits.find((s) => s.profileId === profileId)?.amountDue || 0;
-
-    if (payer) {
-      notifyPaymentMade(household, payer.fullName, splitAmount, household.currency).catch(() => {});
+    if (status === 'paid_to_admin') {
+      const payer = profiles.find((p) => p.id === profileId);
+      const targetBill = bills.find((b) => b.id === billId);
+      const splitAmount = targetBill?.splits.find((s) => s.profileId === profileId)?.amountDue || 0;
+      if (payer) {
+        notifyPaymentMade(household, payer.fullName, splitAmount, household.currency).catch(() => {});
+      }
     }
   };
 
+  const markSplitPaidToAdmin = (billId: string, profileId: string, notes?: string) => {
+    setSplitStatus(billId, profileId, 'paid_to_admin', { notes });
+  };
+
   const confirmSplitPayment = (billId: string, profileId: string) => {
-    const nowIso = new Date().toISOString();
+    setSplitStatus(billId, profileId, 'confirmed_by_admin');
+  };
 
-    setBills((prev) =>
-      prev.map((b) => {
-        if (b.id !== billId) return b;
-        const splits = b.splits.map((s) => {
-          if (s.profileId !== profileId) return s;
-          return {
-            ...s,
-            status: 'confirmed_by_admin' as SplitStatus,
-            confirmedPaidAt: nowIso,
-          };
-        });
-        return { ...b, splits };
-      })
-    );
+  const revertSplitToPending = async (billId: string, profileId: string) => {
+    await setSplitStatus(billId, profileId, 'pending');
+  };
 
-    apiClient.bills.update(billId, {
-      splitUpdate: {
-        profileId,
-        status: 'confirmed_by_admin',
-        confirmedPaidAt: nowIso,
-      },
-    }).catch((err) => console.warn('Could not confirm split in D1:', err));
+  const confirmAllPendingSplits = async (): Promise<number> => {
+    const pendingItems: { billId: string; profileId: string }[] = [];
+    bills.forEach((b) => {
+      b.splits.forEach((s) => {
+        if (s.status === 'paid_to_admin') {
+          pendingItems.push({ billId: b.id, profileId: s.profileId });
+        }
+      });
+    });
+
+    for (const item of pendingItems) {
+      await setSplitStatus(item.billId, item.profileId, 'confirmed_by_admin');
+    }
+
+    return pendingItems.length;
   };
 
   const updateBillSplits = async (billId: string, updatedSplits: BillSplit[], newTotalAmount?: number) => {
@@ -660,6 +691,9 @@ export const HouseholdProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         togglePaidToProvider,
         markSplitPaidToAdmin,
         confirmSplitPayment,
+        setSplitStatus,
+        revertSplitToPending,
+        confirmAllPendingSplits,
         updateBillSplits,
         updateBill,
         updateSplitRules,

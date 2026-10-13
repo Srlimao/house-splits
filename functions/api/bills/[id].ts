@@ -109,24 +109,57 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
     }
 
     if (body.splitUpdate) {
-      const { profileId, status, paidAt, markedPaidAt, confirmedAt, confirmedPaidAt, notes } = body.splitUpdate;
-      await env.DB.prepare(
-        `UPDATE bill_splits 
-         SET status = COALESCE(?, status), 
-             paid_at = COALESCE(?, paid_at), 
-             confirmed_at = COALESCE(?, confirmed_at),
-             notes = COALESCE(?, notes)
-         WHERE bill_id = ? AND profile_id = ?`
-      )
-        .bind(
-          status || null,
-          markedPaidAt || paidAt || null,
-          confirmedPaidAt || confirmedAt || null,
-          notes || null,
-          billId,
-          profileId
+      const { profileId, status, paidAt, markedPaidAt, confirmedAt, confirmedPaidAt, notes, resetTimestamps } = body.splitUpdate;
+      
+      if (status === 'pending' || resetTimestamps) {
+        await env.DB.prepare(
+          `UPDATE bill_splits 
+           SET status = 'pending', 
+               paid_at = NULL, 
+               confirmed_at = NULL,
+               notes = COALESCE(?, notes)
+           WHERE bill_id = ? AND profile_id = ?`
         )
-        .run();
+          .bind(notes || null, billId, profileId)
+          .run();
+      } else if (status === 'confirmed_by_admin') {
+        const nowIso = new Date().toISOString();
+        await env.DB.prepare(
+          `UPDATE bill_splits 
+           SET status = 'confirmed_by_admin', 
+               paid_at = COALESCE(?, paid_at, ?), 
+               confirmed_at = ?,
+               notes = COALESCE(?, notes)
+           WHERE bill_id = ? AND profile_id = ?`
+        )
+          .bind(
+            markedPaidAt || paidAt || null,
+            nowIso,
+            confirmedPaidAt || confirmedAt || nowIso,
+            notes || null,
+            billId,
+            profileId
+          )
+          .run();
+      } else {
+        await env.DB.prepare(
+          `UPDATE bill_splits 
+           SET status = COALESCE(?, status), 
+               paid_at = COALESCE(?, paid_at), 
+               confirmed_at = ?,
+               notes = COALESCE(?, notes)
+           WHERE bill_id = ? AND profile_id = ?`
+        )
+          .bind(
+            status || null,
+            markedPaidAt || paidAt || null,
+            confirmedPaidAt || confirmedAt || null,
+            notes || null,
+            billId,
+            profileId
+          )
+          .run();
+      }
     }
 
     return new Response(JSON.stringify({ success: true }), {
