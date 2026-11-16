@@ -1,7 +1,7 @@
 import React from 'react';
 import { useHousehold } from '../../context/HouseholdContext';
-import { formatCurrency } from '../../lib/splitCalculator';
-import { Wallet, ArrowUpRight, CheckCircle2, Clock, Copy, Check } from 'lucide-react';
+import { formatCurrency, getBillReferenceDate } from '../../lib/splitCalculator';
+import { Wallet, ArrowUpRight, Copy, Check } from 'lucide-react';
 
 interface BalanceOverviewProps {
   onOpenPaymentInfo: () => void;
@@ -10,22 +10,20 @@ interface BalanceOverviewProps {
 
 export const BalanceOverview: React.FC<BalanceOverviewProps> = ({
   onOpenPaymentInfo,
-  onOpenScanner,
 }) => {
-  const { household, activeProfile, bills, profiles } = useHousehold();
+  const { household, activeProfile, bills, profiles, isSystemManager } = useHousehold();
   const [copied, setCopied] = React.useState(false);
 
-  const isAdmin = activeProfile.role === 'admin';
+  const isAdmin = activeProfile.role === 'admin' || isSystemManager;
 
   const now = new Date();
   const currentMonthName = now.toLocaleString('default', { month: 'long', year: 'numeric' });
   const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
   // Dashboard strictly displays the current month
-  const currentMonthBills = bills.filter((bill) => {
-    const billDate = bill.dueDate || bill.issueDate || bill.createdAt;
-    return billDate.startsWith(currentYearMonth);
-  });
+  const currentMonthBills = bills.filter((bill) =>
+    getBillReferenceDate(bill).startsWith(currentYearMonth)
+  );
 
   // Calculations for Admin perspective
   let totalOwedToAdmin = 0;
@@ -42,37 +40,40 @@ export const BalanceOverview: React.FC<BalanceOverviewProps> = ({
 
   currentMonthBills.forEach((bill) => {
     if (bill.paidToProvider) {
-      totalPaidByAdmin += bill.totalAmount;
+      totalPaidByAdmin += Number(bill.totalAmount) || 0;
     }
 
-    bill.splits.forEach((split) => {
+    (bill.splits || []).forEach((split) => {
       // Roommate owes Admin if profileId is not the admin
       const isSplitFromOtherMember = split.profileId !== adminId && split.profileId !== 'user-admin';
+      const splitAmt = Number(split.amountDue) || 0;
 
       if (isSplitFromOtherMember) {
         if (split.status === 'pending') {
-          totalOwedToAdmin += split.amountDue;
+          totalOwedToAdmin += splitAmt;
         } else if (split.status === 'paid_to_admin') {
-          totalPendingConfirmation += split.amountDue;
+          totalPendingConfirmation += splitAmt;
         }
       }
 
       // If this split belongs to the actively logged-in user
       if (split.profileId === activeProfile.id) {
         if (split.status === 'pending') {
-          myTotalOwed += split.amountDue;
+          myTotalOwed += splitAmt;
         } else if (split.status === 'paid_to_admin') {
-          myPendingConfirmation += split.amountDue;
+          myPendingConfirmation += splitAmt;
         } else if (split.status === 'confirmed_by_admin') {
-          myTotalSettled += split.amountDue;
+          myTotalSettled += splitAmt;
         }
       }
     });
   });
 
+  const iban = household.adminPaymentInfo?.iban || '';
+
   const handleCopyIban = () => {
-    if (household.adminPaymentInfo.iban) {
-      navigator.clipboard.writeText(household.adminPaymentInfo.iban);
+    if (iban) {
+      navigator.clipboard.writeText(iban);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
@@ -141,7 +142,7 @@ export const BalanceOverview: React.FC<BalanceOverviewProps> = ({
                 <ArrowUpRight className="w-4 h-4" />
               </button>
 
-              {household.adminPaymentInfo.iban && (
+              {iban && (
                 <button
                   onClick={handleCopyIban}
                   className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-zinc-800/70 hover:bg-zinc-800 text-zinc-300 text-xs font-medium border border-zinc-700/60 transition-colors"

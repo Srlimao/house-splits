@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useHousehold } from '../../context/HouseholdContext';
 import { Bill } from '../../types';
+import { formatYearMonthLabel, getBillReferenceDate } from '../../lib/splitCalculator';
 import { BillCard } from './BillCard';
 import { BillFilters, SplitFilterOption } from './BillFilters';
 import { DocumentViewerModal } from './DocumentViewerModal';
@@ -18,6 +19,7 @@ export const BillList: React.FC<BillListProps> = () => {
     profiles,
     household,
     activeProfile,
+    isSystemManager,
     togglePaidToProvider,
     markSplitPaidToAdmin,
     confirmSplitPayment,
@@ -34,7 +36,7 @@ export const BillList: React.FC<BillListProps> = () => {
   const [editingSplitsBill, setEditingSplitsBill] = useState<Bill | null>(null);
   const [billToDelete, setBillToDelete] = useState<string | null>(null);
 
-  const isAdmin = activeProfile.role === 'admin';
+  const isAdmin = activeProfile.role === 'admin' || isSystemManager;
 
   const getCategory = (catId: string) =>
     categories.find(
@@ -48,36 +50,40 @@ export const BillList: React.FC<BillListProps> = () => {
 
   const availableMonths = Array.from(
     new Set(
-      bills.map((b) => (b.dueDate || b.issueDate || b.createdAt).substring(0, 7))
+      bills
+        .map((b) => getBillReferenceDate(b).substring(0, 7))
+        .filter((ym) => /^\d{4}-\d{2}$/.test(ym))
     )
-  ).sort().reverse();
-
-  const formatMonthLabel = (ym: string) => {
-    const [year, month] = ym.split('-');
-    const date = new Date(Number(year), Number(month) - 1, 1);
-    return date.toLocaleString('default', { month: 'long', year: 'numeric' });
-  };
+  )
+    .sort()
+    .reverse();
 
   // Global counts for filter badges
   let totalAwaitingConfirmation = 0;
   let totalMyPendingSplits = 0;
 
   bills.forEach((b) => {
-    b.splits.forEach((s) => {
+    (b.splits || []).forEach((s) => {
       if (s.status === 'paid_to_admin') totalAwaitingConfirmation++;
       if (s.profileId === activeProfile.id && s.status === 'pending') totalMyPendingSplits++;
     });
   });
 
   const filteredBills = bills.filter((b) => {
-    const billYm = (b.dueDate || b.issueDate || b.createdAt).substring(0, 7);
+    const billYm = getBillReferenceDate(b).substring(0, 7);
     if (selectedMonth !== 'all' && billYm !== selectedMonth) return false;
-    if (selectedCategory !== 'all' && b.categoryId !== selectedCategory) return false;
+    if (selectedCategory !== 'all') {
+      const matchedCat = getCategory(b.categoryId);
+      if (b.categoryId !== selectedCategory && matchedCat?.id !== selectedCategory) {
+        return false;
+      }
+    }
 
-    const hasUnpaidSplits = b.splits.some((s) => s.status === 'pending');
-    const hasAwaitingSplits = b.splits.some((s) => s.status === 'paid_to_admin');
-    const hasMyPending = b.splits.some((s) => s.profileId === activeProfile.id && s.status === 'pending');
-    const isFullySettled = b.splits.length > 0 && b.splits.every((s) => s.status === 'confirmed_by_admin');
+    const billSplits = b.splits || [];
+    const hasUnpaidSplits = billSplits.some((s) => s.status === 'pending');
+    const hasAwaitingSplits = billSplits.some((s) => s.status === 'paid_to_admin');
+    const hasMyPending = billSplits.some((s) => s.profileId === activeProfile.id && s.status === 'pending');
+    const isFullySettled = billSplits.length > 0 && billSplits.every((s) => s.status === 'confirmed_by_admin');
 
     if (splitFilter === 'unpaid' && !hasUnpaidSplits) return false;
     if (splitFilter === 'awaiting' && !hasAwaitingSplits) return false;
@@ -118,7 +124,7 @@ export const BillList: React.FC<BillListProps> = () => {
         selectedMonth={selectedMonth}
         onSelectMonth={setSelectedMonth}
         availableMonths={availableMonths}
-        formatMonthLabel={formatMonthLabel}
+        formatMonthLabel={formatYearMonthLabel}
         selectedCategory={selectedCategory}
         onSelectCategory={setSelectedCategory}
         categories={categories}

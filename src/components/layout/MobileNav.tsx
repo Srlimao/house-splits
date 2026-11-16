@@ -13,12 +13,12 @@ export const MobileNav: React.FC<MobileNavProps> = ({
   setActiveTab,
   onOpenScanner,
 }) => {
-  const { activeProfile, bills } = useHousehold();
-  const isAdmin = activeProfile.role === 'admin';
+  const { activeProfile, bills, isSystemManager } = useHousehold();
+  const isAdmin = activeProfile.role === 'admin' || isSystemManager;
 
   let pendingConfirmationCount = 0;
   bills.forEach((b) => {
-    b.splits.forEach((s) => {
+    (b.splits || []).forEach((s) => {
       if (s.status === 'paid_to_admin') pendingConfirmationCount++;
     });
   });

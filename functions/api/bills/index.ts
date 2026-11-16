@@ -1,3 +1,11 @@
+import {
+  MAX_INLINE_DATA_URL_CHARS,
+  resolveBillHouseholdId,
+  resolveBillCategoryId,
+  resolveBillCreatorId,
+  insertBillSplitsInDb,
+} from '../_billDbHelpers';
+
 interface Env {
   DB: D1Database;
 }
@@ -10,31 +18,41 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
     const url = new URL(request.url);
     const householdId = url.searchParams.get('household_id');
 
-    let billsQuery = 'SELECT * FROM bills';
     let billsRes: any[];
+    let allSplits: any[];
 
     if (householdId) {
-      const res = await env.DB.prepare(`${billsQuery} WHERE household_id = ? ORDER BY due_date DESC`)
+      const res = await env.DB.prepare('SELECT * FROM bills WHERE household_id = ? ORDER BY due_date DESC')
         .bind(householdId)
         .all();
       billsRes = res.results || [];
+
+      const splitRes = await env.DB.prepare(
+        'SELECT s.* FROM bill_splits s JOIN bills b ON b.id = s.bill_id WHERE b.household_id = ?'
+      )
+        .bind(householdId)
+        .all();
+      allSplits = splitRes.results || [];
     } else {
-      const res = await env.DB.prepare(`${billsQuery} ORDER BY due_date DESC`).all();
+      const res = await env.DB.prepare('SELECT * FROM bills ORDER BY due_date DESC').all();
       billsRes = res.results || [];
+
+      const splitRes = await env.DB.prepare('SELECT * FROM bill_splits').all();
+      allSplits = splitRes.results || [];
     }
 
-    // Fetch splits for all bills
-    const { results: allSplits } = await env.DB.prepare('SELECT * FROM bill_splits').all();
     const splitsByBill: Record<string, any[]> = {};
-    (allSplits || []).forEach((s: any) => {
+    allSplits.forEach((s: any) => {
       if (!splitsByBill[s.bill_id]) splitsByBill[s.bill_id] = [];
+      const amount = Number(s.amount) || 0;
+      const percentage = Number(s.percentage) || 0;
       splitsByBill[s.bill_id].push({
         id: s.id,
         billId: s.bill_id,
         profileId: s.profile_id,
-        amount: s.amount,
-        amountDue: s.amount,
-        percentage: s.percentage,
+        amount,
+        amountDue: amount,
+        percentage,
         status: s.status,
         paidAt: s.paid_at,
         markedPaidAt: s.paid_at,
@@ -50,16 +68,20 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       categoryId: b.category_id,
       providerName: b.provider_name,
       invoiceNumber: b.invoice_number,
-      totalAmount: b.total_amount,
-      currency: b.currency,
+      totalAmount: Number(b.total_amount) || 0,
+      currency: b.currency || 'EUR',
       issueDate: b.issue_date,
       dueDate: b.due_date,
       periodStart: b.period_start,
       periodEnd: b.period_end,
-      filePath: b.file_path,
-      fileType: b.file_type,
-      fileName: b.file_name || (b.file_path && !b.file_path.startsWith('data:') ? b.file_path.split('/').pop()?.split('?')[0] : undefined),
-      fileDataUrl: b.file_path && b.file_path.startsWith('data:') ? b.file_path : undefined,
+      filePath: b.file_path || undefined,
+      fileType: b.file_type || undefined,
+      fileName:
+        b.file_name ||
+        (b.file_path && !b.file_path.startsWith('data:')
+          ? b.file_path.split('/').pop()?.split('?')[0]
+          : undefined),
+      fileDataUrl: undefined,
       paidToProvider: Boolean(b.paid_to_provider),
       paidToProviderAt: b.paid_to_provider_at,
       createdBy: b.created_by,
@@ -85,168 +107,70 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
     const bill = (await request.json()) as any;
     const newId = bill.id || crypto.randomUUID();
     const nowIso = new Date().toISOString();
+    const dueDate = bill.dueDate || bill.issueDate || nowIso.split('T')[0];
 
-    // 1. Resolve Household ID
-    let householdId = bill.householdId;
-    const houseExists = await env.DB.prepare('SELECT id FROM households WHERE id = ?').bind(householdId).first();
-    if (!houseExists) {
-      const fallbackHouse = await env.DB.prepare('SELECT id FROM households ORDER BY created_at ASC LIMIT 1').first();
-      if (fallbackHouse?.id) {
-        householdId = fallbackHouse.id as string;
-      } else {
-        return new Response(JSON.stringify({ error: 'No valid household found' }), { status: 400 });
-      }
+    const householdId = await resolveBillHouseholdId(env.DB, bill.householdId);
+    if (!householdId) {
+      return new Response(JSON.stringify({ error: 'No valid household found' }), { status: 400 });
     }
 
-    // 2. Resolve Category ID (handles frontend 'cat-rent', 'cat-elec', UUIDs, codes)
-    let categoryId = bill.categoryId;
-    const catExists = await env.DB.prepare('SELECT id FROM bill_categories WHERE id = ?').bind(categoryId).first();
+    const categoryId = await resolveBillCategoryId(env.DB, householdId, bill.categoryId);
+    const createdBy = await resolveBillCreatorId(env.DB, householdId, bill.createdBy);
 
-    if (!catExists) {
-      const codeCandidate = (categoryId || 'utility').replace(/^cat-/, '').toLowerCase();
-      const codeMapping: Record<string, string> = {
-        elec: 'electricity',
-        net: 'internet',
-        wat: 'water',
-      };
-      const normalizedCode = codeMapping[codeCandidate] || codeCandidate;
-
-      const matched = await env.DB.prepare(
-        'SELECT id FROM bill_categories WHERE household_id = ? AND (code = ? OR code = ? OR id = ?) LIMIT 1'
-      )
-        .bind(householdId, codeCandidate, normalizedCode, categoryId)
-        .first();
-
-      if (matched?.id) {
-        categoryId = matched.id as string;
-      } else {
-        // Fallback: check any category in household
-        const anyCat = await env.DB.prepare(
-          'SELECT id FROM bill_categories WHERE household_id = ? LIMIT 1'
-        ).bind(householdId).first();
-
-        if (anyCat?.id) {
-          categoryId = anyCat.id as string;
-        } else {
-          // Create new category in bill_categories if none exist
-          const newCatId = crypto.randomUUID();
-          const catName = normalizedCode.charAt(0).toUpperCase() + normalizedCode.slice(1);
-          await env.DB.prepare(
-            'INSERT INTO bill_categories (id, household_id, name, code, icon, color_hex) VALUES (?, ?, ?, ?, ?, ?)'
-          )
-            .bind(newCatId, householdId, catName, normalizedCode, 'zap', '#10b981')
-            .run();
-          categoryId = newCatId;
-        }
-      }
-    }
-
-    // 3. Resolve created_by profile
-    let createdBy = bill.createdBy;
-    if (createdBy) {
-      const profileExists = await env.DB.prepare('SELECT id FROM profiles WHERE id = ?').bind(createdBy).first();
-      if (!profileExists) {
-        const adminProfile = await env.DB.prepare(
-          'SELECT id FROM profiles WHERE household_id = ? AND role = "admin" LIMIT 1'
-        ).bind(householdId).first();
-        createdBy = adminProfile?.id ? (adminProfile.id as string) : null;
-      }
-    }
-
-    // 4. Resolve file parameters
-    const filePath = bill.filePath || bill.fileDataUrl || null;
+    const rawPath = bill.filePath || bill.fileDataUrl || null;
+    const isOversizedDataUrl =
+      typeof rawPath === 'string' && rawPath.startsWith('data:') && rawPath.length > MAX_INLINE_DATA_URL_CHARS;
+    let safeFilePath: string | null = isOversizedDataUrl ? null : rawPath;
     const fileType = bill.fileType || null;
-    const fileName = bill.fileName || (typeof filePath === 'string' && !filePath.startsWith('data:') ? filePath.split('/').pop()?.split('?')[0] : null);
+    const fileName =
+      bill.fileName ||
+      (typeof safeFilePath === 'string' && !safeFilePath.startsWith('data:')
+        ? safeFilePath.split('/').pop()?.split('?')[0]
+        : null);
 
-    // Insert bill record
-    await env.DB.prepare(
-      `INSERT INTO bills (
-        id, household_id, category_id, provider_name, invoice_number, total_amount, currency,
-        issue_date, due_date, period_start, period_end, file_path, file_type, file_name, paid_to_provider,
-        paid_to_provider_at, created_by, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
-        newId,
-        householdId,
-        categoryId,
-        bill.providerName,
-        bill.invoiceNumber || '',
-        bill.totalAmount,
-        bill.currency || 'EUR',
-        bill.issueDate || null,
-        bill.dueDate,
-        bill.periodStart || null,
-        bill.periodEnd || null,
-        filePath,
-        fileType,
-        fileName,
-        bill.paidToProvider ? 1 : 0,
-        bill.paidToProviderAt || null,
-        createdBy || null,
-        nowIso
+    const insertBillRow = async (pathToPersist: string | null) => {
+      await env.DB.prepare(
+        `INSERT INTO bills (
+          id, household_id, category_id, provider_name, invoice_number, total_amount, currency,
+          issue_date, due_date, period_start, period_end, file_path, file_type, file_name, paid_to_provider,
+          paid_to_provider_at, created_by, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
-      .run();
-
-    // 5. Insert bill splits
-    const insertedSplits: any[] = [];
-    if (bill.splits && Array.isArray(bill.splits)) {
-      // Find admin profile for fallback mapping if needed
-      const adminProfile = await env.DB.prepare(
-        'SELECT id FROM profiles WHERE household_id = ? AND role = "admin" LIMIT 1'
-      ).bind(householdId).first();
-      const adminId = adminProfile?.id as string | undefined;
-
-      for (const split of bill.splits) {
-        let splitProfileId = split.profileId;
-        const pExists = await env.DB.prepare('SELECT id FROM profiles WHERE id = ?').bind(splitProfileId).first();
-
-        if (!pExists) {
-          if ((splitProfileId === 'user-admin' || !splitProfileId) && adminId) {
-            splitProfileId = adminId;
-          } else {
-            // Profile does not exist in DB; skip this split to prevent foreign key abort
-            continue;
-          }
-        }
-
-        const splitId = split.id || crypto.randomUUID();
-        const amount = split.amountDue !== undefined ? split.amountDue : (split.amount || 0);
-
-        await env.DB.prepare(
-          `INSERT INTO bill_splits (
-            id, bill_id, profile_id, amount, percentage, status, paid_at, confirmed_at, notes
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        .bind(
+          newId,
+          householdId,
+          categoryId,
+          bill.providerName || 'Utility Bill',
+          bill.invoiceNumber || '',
+          Number(bill.totalAmount) || 0,
+          bill.currency || 'EUR',
+          bill.issueDate || null,
+          dueDate,
+          bill.periodStart || null,
+          bill.periodEnd || null,
+          pathToPersist,
+          fileType,
+          fileName,
+          bill.paidToProvider ? 1 : 0,
+          bill.paidToProviderAt || null,
+          createdBy,
+          nowIso
         )
-          .bind(
-            splitId,
-            newId,
-            splitProfileId,
-            amount,
-            split.percentage,
-            split.status || 'pending',
-            split.markedPaidAt || split.paidAt || null,
-            split.confirmedPaidAt || split.confirmedAt || null,
-            split.notes || null
-          )
-          .run();
+        .run();
+    };
 
-        insertedSplits.push({
-          id: splitId,
-          billId: newId,
-          profileId: splitProfileId,
-          amount,
-          amountDue: amount,
-          percentage: split.percentage,
-          status: split.status || 'pending',
-          paidAt: split.markedPaidAt || split.paidAt || null,
-          markedPaidAt: split.markedPaidAt || split.paidAt || null,
-          confirmedAt: split.confirmedPaidAt || split.confirmedAt || null,
-          confirmedPaidAt: split.confirmedPaidAt || split.confirmedAt || null,
-          notes: split.notes || null,
-        });
+    try {
+      await insertBillRow(safeFilePath);
+    } catch (insertErr) {
+      if (safeFilePath !== null) {
+        safeFilePath = null;
+        await insertBillRow(null);
+      } else {
+        throw insertErr;
       }
     }
+
+    const insertedSplits = await insertBillSplitsInDb(env.DB, newId, householdId, bill.splits || []);
 
     return new Response(
       JSON.stringify({
@@ -254,6 +178,11 @@ export const onRequestPost: PagesFunction<Env> = async (context) => {
         id: newId,
         householdId,
         categoryId,
+        dueDate,
+        filePath: safeFilePath || undefined,
+        fileName: fileName || undefined,
+        fileType: fileType || undefined,
+        fileDataUrl: undefined,
         createdBy,
         splits: insertedSplits,
         createdAt: nowIso,

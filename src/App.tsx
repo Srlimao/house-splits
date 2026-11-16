@@ -14,12 +14,22 @@ import { AuthScreen } from './components/auth/AuthScreen';
 import { SystemManagerPortal } from './components/system/SystemManagerPortal';
 import { SplitsTracker } from './components/settlement/SplitsTracker';
 import { RoommateSettlementSummary } from './components/dashboard/RoommateSettlementSummary';
-import { Sparkles, Receipt, SlidersHorizontal, Plus, Users, UserPlus, ArrowLeft, Wallet } from 'lucide-react';
+import { DashboardSidebar } from './components/dashboard/DashboardSidebar';
+import { Sparkles, SlidersHorizontal, ArrowLeft, Wallet } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
-  const { currentUser, isAuthLoading, isSystemManager, activeProfile, bills, profiles, household } = useHousehold();
+  const {
+    currentUser,
+    isAuthLoading,
+    isSystemManager,
+    activeProfile,
+    bills,
+    profiles,
+    household,
+    inspectingHouseholdId,
+    setInspectingHouseholdId,
+  } = useHousehold();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'bills' | 'splits' | 'rules' | 'settings'>('dashboard');
-  const [inspectingHouseholdId, setInspectingHouseholdId] = useState<string | null>(null);
 
   // Modals state
   const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -53,7 +63,7 @@ const MainAppContent: React.FC = () => {
 
   let awaitingConfirmationCount = 0;
   bills.forEach((b) => {
-    b.splits.forEach((s) => {
+    (b.splits || []).forEach((s) => {
       if (s.status === 'paid_to_admin') awaitingConfirmationCount++;
     });
   });
@@ -171,65 +181,11 @@ const MainAppContent: React.FC = () => {
                 <DueSoonList onSelectBill={() => setActiveTab('bills')} />
               </div>
 
-              {/* Right Sidebar: Roommates & Split Rules */}
-              <div className="space-y-4">
-                {/* Roommates Panel */}
-                <div className="rounded-2xl p-5 bg-zinc-900/40 border border-zinc-800/80">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center gap-2">
-                      <Users className="w-4 h-4 text-brand-400" />
-                      <h3 className="font-bold text-sm text-zinc-100">Roommates ({profiles.length})</h3>
-                    </div>
-                    <button
-                      onClick={() => setIsRoommatesOpen(true)}
-                      className="text-xs text-brand-400 hover:underline font-semibold"
-                    >
-                      Invite / Code
-                    </button>
-                  </div>
-
-                  <div className="flex items-center -space-x-2 mb-4">
-                    {profiles.map((p) => (
-                      <img
-                        key={p.id}
-                        src={p.avatarUrl}
-                        alt={p.fullName}
-                        title={`${p.fullName} (${p.role})`}
-                        className="w-8 h-8 rounded-full object-cover ring-2 ring-zinc-900"
-                      />
-                    ))}
-                  </div>
-
-                  <button
-                    onClick={() => setIsRoommatesOpen(true)}
-                    className="w-full py-2 rounded-xl bg-zinc-800/80 hover:bg-zinc-800 text-zinc-200 text-xs font-semibold border border-zinc-700/60 transition-colors flex items-center justify-center gap-1.5"
-                  >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    <span>Manage & Invite Roommates</span>
-                  </button>
-                </div>
-
-                {/* Quick Split Rules Preview Panel */}
-                <div className="rounded-2xl p-5 bg-zinc-900/40 border border-zinc-800/80 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <SlidersHorizontal className="w-4 h-4 text-brand-400" />
-                      <h3 className="font-bold text-sm text-zinc-100">House Split Rules</h3>
-                    </div>
-                    <p className="text-xs text-zinc-400 mb-4">
-                      Rent is split <strong className="text-zinc-200">50% Admin / 25% Couple each</strong>.
-                      Utilities are split <strong className="text-zinc-200">33.3% each</strong>.
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={() => setActiveTab('rules')}
-                    className="w-full py-2 rounded-xl bg-zinc-800/70 hover:bg-zinc-800 text-zinc-200 text-xs font-semibold border border-zinc-700/60 transition-colors"
-                  >
-                    Manage Split Presets
-                  </button>
-                </div>
-              </div>
+              <DashboardSidebar
+                profiles={profiles}
+                onOpenRoommates={() => setIsRoommatesOpen(true)}
+                onOpenRules={() => setActiveTab('rules')}
+              />
             </div>
           </div>
         )}

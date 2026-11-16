@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Bill, BillSplit, Profile } from '../../types';
 import { formatCurrency } from '../../lib/splitCalculator';
+import { DEFAULT_AVATAR_URL } from '../../context/householdStorageAndNormalizers';
 import { ShieldCheck, Clock, Check, Send, AlertCircle, RotateCcw } from 'lucide-react';
 
 interface BillSplitRowProps {
@@ -54,7 +55,7 @@ export const BillSplitRow: React.FC<BillSplitRowProps> = ({
         <div className="flex items-center gap-2.5">
           <div className="relative">
             <img
-              src={profile?.avatarUrl}
+              src={profile?.avatarUrl || DEFAULT_AVATAR_URL}
               alt={profile?.fullName || 'Roommate'}
               className="w-7 h-7 rounded-full object-cover ring-1 ring-zinc-700"
             />

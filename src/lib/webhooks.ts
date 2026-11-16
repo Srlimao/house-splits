@@ -22,12 +22,12 @@ export async function notifyNewBill(
   categoryName: string,
   profiles: Profile[]
 ): Promise<boolean> {
-  const url = household.webhookSettings.discordUrl;
-  if (!url || !household.webhookSettings.notifyOnNewBill) return false;
+  const url = household?.webhookSettings?.discordUrl;
+  if (!url || !household?.webhookSettings?.notifyOnNewBill) return false;
 
   const profileMap = new Map(profiles.map((p) => [p.id, p.fullName || p.email]));
 
-  const splitFields = bill.splits.map((s) => ({
+  const splitFields = (bill.splits || []).map((s) => ({
     name: `${profileMap.get(s.profileId) || 'Roommate'} (${s.percentage}%)`,
     value: `${formatCurrency(s.amountDue, bill.currency)}`,
     inline: true,
@@ -59,8 +59,8 @@ export async function notifyPaymentMade(
   amount: number,
   currency: string = 'EUR'
 ): Promise<boolean> {
-  const url = household.webhookSettings.discordUrl;
-  if (!url || !household.webhookSettings.notifyOnPayment) return false;
+  const url = household?.webhookSettings?.discordUrl;
+  if (!url || !household?.webhookSettings?.notifyOnPayment) return false;
 
   const payload = {
     username: 'HouseSplits Bot',

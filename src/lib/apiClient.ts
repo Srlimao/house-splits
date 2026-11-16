@@ -215,7 +215,7 @@ export const apiClient = {
     }
 
     // 2. Cloudflare D1 Native Storage: Convert file to Base64 Data URL
-    // For images, optimize dimensions to keep D1 rows fast and lightweight
+    // For images, optimize dimensions & JPEG quality to keep D1 rows fast and under 1MB
     if (file.type.startsWith('image/')) {
       try {
         const optimizedDataUrl = await new Promise<string>((resolve, reject) => {
@@ -223,24 +223,34 @@ export const apiClient = {
           const objectUrl = URL.createObjectURL(file);
           img.onload = () => {
             URL.revokeObjectURL(objectUrl);
-            const MAX_DIM = 1600;
-            let { width, height } = img;
-            if (width > MAX_DIM || height > MAX_DIM) {
-              if (width > height) {
-                height = Math.round((height * MAX_DIM) / width);
-                width = MAX_DIM;
-              } else {
-                width = Math.round((width * MAX_DIM) / height);
-                height = MAX_DIM;
+
+            const encodeCanvas = (maxDim: number, quality: number): string => {
+              let { width, height } = img;
+              if (width > maxDim || height > maxDim) {
+                if (width > height) {
+                  height = Math.round((height * maxDim) / width);
+                  width = maxDim;
+                } else {
+                  width = Math.round((width * maxDim) / height);
+                  height = maxDim;
+                }
               }
+              const canvas = document.createElement('canvas');
+              canvas.width = width;
+              canvas.height = height;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return '';
+              // Fill white background so transparent PNGs convert cleanly to JPEG
+              ctx.fillStyle = '#ffffff';
+              ctx.fillRect(0, 0, width, height);
+              ctx.drawImage(img, 0, 0, width, height);
+              return canvas.toDataURL('image/jpeg', quality);
+            };
+
+            let dataUrl = encodeCanvas(1400, 0.8);
+            if (dataUrl.length > 750_000) {
+              dataUrl = encodeCanvas(1000, 0.65);
             }
-            const canvas = document.createElement('canvas');
-            canvas.width = width;
-            canvas.height = height;
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return resolve('');
-            ctx.drawImage(img, 0, 0, width, height);
-            const dataUrl = canvas.toDataURL(file.type === 'image/png' ? 'image/png' : 'image/jpeg', 0.85);
             resolve(dataUrl);
           };
           img.onerror = reject;
@@ -252,7 +262,7 @@ export const apiClient = {
             url: optimizedDataUrl,
             key: file.name,
             fileName: file.name,
-            fileType: file.type || 'image/jpeg',
+            fileType: 'image/jpeg',
           };
         }
       } catch {

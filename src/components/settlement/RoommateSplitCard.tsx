@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Profile, Bill, BillSplit, SplitStatus } from '../../types';
+import { Profile, Bill, BillSplit } from '../../types';
 import { formatCurrency } from '../../lib/splitCalculator';
+import { DEFAULT_AVATAR_URL } from '../../context/householdStorageAndNormalizers';
 import {
   ShieldCheck,
   Clock,
@@ -71,7 +72,7 @@ export const RoommateSplitCard: React.FC<RoommateSplitCardProps> = ({
         >
           <div className="relative">
             <img
-              src={roommate.avatarUrl}
+              src={roommate.avatarUrl || DEFAULT_AVATAR_URL}
               alt={roommate.fullName}
               className={`w-11 h-11 rounded-full object-cover ring-2 ${
                 isAllSettled

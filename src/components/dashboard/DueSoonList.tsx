@@ -1,15 +1,18 @@
 import React from 'react';
 import { useHousehold } from '../../context/HouseholdContext';
-import { formatCurrency } from '../../lib/splitCalculator';
-import { Zap, Droplet, Wifi, Home, Flame, FileText, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
-import { differenceInDays, parseISO } from 'date-fns';
+import {
+  formatCurrency,
+  getBillReferenceDate,
+  getDaysUntilDue,
+} from '../../lib/splitCalculator';
+import { Zap, Droplet, Wifi, Home, Flame, FileText, CheckCircle2, Clock } from 'lucide-react';
 
 interface DueSoonListProps {
   onSelectBill: (billId: string) => void;
 }
 
 export const DueSoonList: React.FC<DueSoonListProps> = ({ onSelectBill }) => {
-  const { bills, categories, household, activeProfile } = useHousehold();
+  const { bills, categories, activeProfile } = useHousehold();
 
   const getCategory = (catId: string) =>
     categories.find(
@@ -35,14 +38,15 @@ export const DueSoonList: React.FC<DueSoonListProps> = ({ onSelectBill }) => {
   const now = new Date();
   const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-  const currentMonthBills = bills.filter((b) => {
-    const billDate = b.dueDate || b.issueDate || b.createdAt;
-    return billDate.startsWith(currentYearMonth);
-  });
-
-  const sortedBills = [...currentMonthBills].sort(
-    (a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime()
+  const currentMonthBills = bills.filter((b) =>
+    getBillReferenceDate(b).startsWith(currentYearMonth)
   );
+
+  const sortedBills = [...currentMonthBills].sort((a, b) => {
+    const timeA = new Date(a.dueDate || a.createdAt || 0).getTime() || 0;
+    const timeB = new Date(b.dueDate || b.createdAt || 0).getTime() || 0;
+    return timeA - timeB;
+  });
 
   return (
     <div className="rounded-2xl p-6 bg-zinc-900/40 border border-zinc-800/80">
@@ -58,9 +62,10 @@ export const DueSoonList: React.FC<DueSoonListProps> = ({ onSelectBill }) => {
       <div className="space-y-3">
         {sortedBills.slice(0, 4).map((bill) => {
           const cat = getCategory(bill.categoryId);
-          const daysLeft = differenceInDays(parseISO(bill.dueDate), new Date());
-          const confirmedCount = bill.splits.filter((s) => s.status === 'confirmed_by_admin').length;
-          const mySplit = bill.splits.find((s) => s.profileId === activeProfile.id);
+          const daysLeft = getDaysUntilDue(bill.dueDate);
+          const billSplits = bill.splits || [];
+          const confirmedCount = billSplits.filter((s) => s.status === 'confirmed_by_admin').length;
+          const mySplit = billSplits.find((s) => s.profileId === activeProfile.id);
 
           return (
             <div
@@ -81,7 +86,9 @@ export const DueSoonList: React.FC<DueSoonListProps> = ({ onSelectBill }) => {
                     <span>•</span>
                     <span className="flex items-center gap-1">
                       <Clock className="w-3 h-3 text-zinc-500" />
-                      {daysLeft < 0 ? (
+                      {daysLeft === null ? (
+                        <span>No due date</span>
+                      ) : daysLeft < 0 ? (
                         <span className="text-rose-400 font-medium">Overdue</span>
                       ) : daysLeft === 0 ? (
                         <span className="text-amber-400 font-medium">Due today</span>
@@ -101,7 +108,6 @@ export const DueSoonList: React.FC<DueSoonListProps> = ({ onSelectBill }) => {
                   </span>
                 </div>
 
-                {/* My Share Pill */}
                 {mySplit && (
                   <div className="text-right">
                     <span className="text-xs text-zinc-400 block">Your Share</span>
@@ -111,16 +117,15 @@ export const DueSoonList: React.FC<DueSoonListProps> = ({ onSelectBill }) => {
                   </div>
                 )}
 
-                {/* Status Indicator */}
                 <div className="flex items-center gap-1 text-xs">
-                  {confirmedCount === bill.splits.length ? (
+                  {billSplits.length > 0 && confirmedCount === billSplits.length ? (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
                       <CheckCircle2 className="w-3 h-3" />
                       <span>Settled</span>
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 font-medium">
-                      <span>{confirmedCount}/{bill.splits.length} paid</span>
+                      <span>{confirmedCount}/{billSplits.length} paid</span>
                     </span>
                   )}
                 </div>

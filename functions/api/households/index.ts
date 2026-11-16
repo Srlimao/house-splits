@@ -2,6 +2,22 @@ interface Env {
   DB: D1Database;
 }
 
+function safeJsonParse<T extends Record<string, any>>(val: unknown, fallback: T): T {
+  if (!val) return fallback;
+  if (typeof val === 'object' && !Array.isArray(val)) return { ...fallback, ...val };
+  if (typeof val === 'string') {
+    try {
+      const parsed = JSON.parse(val);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return { ...fallback, ...parsed };
+      }
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
 export const onRequestGet: PagesFunction<Env> = async (context) => {
   try {
     const { env } = context;
@@ -13,11 +29,26 @@ export const onRequestGet: PagesFunction<Env> = async (context) => {
       'SELECT id, name, currency, invite_code, admin_payment_info, webhook_settings, created_at FROM households ORDER BY created_at DESC'
     ).all();
 
-    const formatted = (results || []).map((h: any) => ({
-      ...h,
-      admin_payment_info: typeof h.admin_payment_info === 'string' ? JSON.parse(h.admin_payment_info || '{}') : h.admin_payment_info,
-      webhook_settings: typeof h.webhook_settings === 'string' ? JSON.parse(h.webhook_settings || '{}') : h.webhook_settings,
-    }));
+    const formatted = (results || []).map((h: any) => {
+      const rawHooks = safeJsonParse<Record<string, any>>(h.webhook_settings, {});
+      const discordUrl = rawHooks.discordUrl ?? rawHooks.discord_url ?? '';
+      return {
+        ...h,
+        admin_payment_info: safeJsonParse(h.admin_payment_info, {
+          iban: '',
+          revolut: '',
+          bizum: '',
+          notes: '',
+        }),
+        webhook_settings: {
+          ...rawHooks,
+          discordUrl,
+          discord_url: discordUrl,
+          notifyOnNewBill: rawHooks.notifyOnNewBill ?? rawHooks.notify_on_new_bill ?? true,
+          notifyOnPayment: rawHooks.notifyOnPayment ?? rawHooks.notify_on_payment ?? true,
+        },
+      };
+    });
 
     return new Response(JSON.stringify(formatted), {
       status: 200,

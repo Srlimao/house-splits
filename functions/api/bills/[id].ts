@@ -50,16 +50,40 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
         .run();
     }
 
-    if (body.filePath !== undefined || body.fileName !== undefined || body.fileType !== undefined) {
-      const filePath = body.filePath || body.fileDataUrl || null;
+    if (
+      body.filePath !== undefined ||
+      body.fileName !== undefined ||
+      body.fileType !== undefined ||
+      body.fileDataUrl !== undefined
+    ) {
+      const rawPath = body.filePath || body.fileDataUrl || null;
+      const isOversizedDataUrl =
+        typeof rawPath === 'string' && rawPath.startsWith('data:') && rawPath.length > 900_000;
+      const safeFilePath = isOversizedDataUrl ? null : rawPath || null;
       const fileType = body.fileType || null;
-      const fileName = body.fileName || (typeof filePath === 'string' && !filePath.startsWith('data:') ? filePath.split('/').pop()?.split('?')[0] : null);
+      const fileName =
+        body.fileName ||
+        (typeof safeFilePath === 'string' && !safeFilePath.startsWith('data:')
+          ? safeFilePath.split('/').pop()?.split('?')[0]
+          : null);
 
-      await env.DB.prepare(
-        'UPDATE bills SET file_path = ?, file_type = ?, file_name = ?, updated_at = datetime("now") WHERE id = ?'
-      )
-        .bind(filePath, fileType, fileName, billId)
-        .run();
+      try {
+        await env.DB.prepare(
+          'UPDATE bills SET file_path = ?, file_type = ?, file_name = ?, updated_at = datetime("now") WHERE id = ?'
+        )
+          .bind(safeFilePath, fileType, fileName, billId)
+          .run();
+      } catch (fileErr) {
+        if (safeFilePath !== null) {
+          await env.DB.prepare(
+            'UPDATE bills SET file_path = NULL, file_type = ?, file_name = ?, updated_at = datetime("now") WHERE id = ?'
+          )
+            .bind(fileType, fileName, billId)
+            .run();
+        } else {
+          throw fileErr;
+        }
+      }
     }
 
     // Replace full splits array if provided
@@ -86,10 +110,11 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
         }
 
         const splitId = split.id || crypto.randomUUID();
-        const amount = split.amountDue !== undefined ? split.amountDue : (split.amount || 0);
+        const amount = Number(split.amountDue !== undefined ? split.amountDue : (split.amount || 0)) || 0;
+        const percentage = Number(split.percentage) || 0;
 
         await env.DB.prepare(
-          `INSERT INTO bill_splits (
+          `INSERT OR REPLACE INTO bill_splits (
             id, bill_id, profile_id, amount, percentage, status, paid_at, confirmed_at, notes
           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
@@ -98,7 +123,7 @@ export const onRequestPut: PagesFunction<Env> = async (context) => {
             billId,
             splitProfileId,
             amount,
-            split.percentage,
+            percentage,
             split.status || 'pending',
             split.markedPaidAt || split.paidAt || null,
             split.confirmedPaidAt || split.confirmedAt || null,

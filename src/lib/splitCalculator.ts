@@ -1,3 +1,5 @@
+import { differenceInDays, parseISO } from 'date-fns';
+
 export interface MemberShareInput {
   profileId: string;
   percentage: number;
@@ -27,10 +29,10 @@ export function calculateExactSplit(
     return [];
   }
 
-  if (totalAmount <= 0) {
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
     return shares.map((s) => ({
       profileId: s.profileId,
-      percentage: s.percentage,
+      percentage: Number.isFinite(s.percentage) ? s.percentage : 0,
       amountDue: 0,
       cents: 0,
     }));
@@ -40,10 +42,14 @@ export function calculateExactSplit(
   const totalCents = Math.round(totalAmount * 100);
 
   // Normalize percentages if they don't exactly equal 100
-  const sumPercent = shares.reduce((acc, curr) => acc + curr.percentage, 0);
-  const normalizedShares = shares.map((s) => ({
+  const safeShares = shares.map((s) => ({
     ...s,
-    normalizedPct: sumPercent > 0 ? (s.percentage / sumPercent) * 100 : 100 / shares.length,
+    percentage: Number.isFinite(s.percentage) && s.percentage >= 0 ? s.percentage : 0,
+  }));
+  const sumPercent = safeShares.reduce((acc, curr) => acc + curr.percentage, 0);
+  const normalizedShares = safeShares.map((s) => ({
+    ...s,
+    normalizedPct: sumPercent > 0 ? (s.percentage / sumPercent) * 100 : 100 / safeShares.length,
   }));
 
   // Initial floor calculation for each member
@@ -94,15 +100,73 @@ export function calculateExactSplit(
 }
 
 /**
- * Format currency amount with symbol
+ * Returns a display currency symbol for a currency code.
  */
-export function formatCurrency(amount: number, currency: string = 'EUR'): string {
+export function getCurrencySymbol(currency?: string): string {
   const symbols: Record<string, string> = {
     EUR: '€',
     USD: '$',
     GBP: '£',
     BRL: 'R$',
   };
-  const symbol = symbols[currency] || currency;
-  return `${symbol}${amount.toFixed(2)}`;
+  const safeCurrency = currency || 'EUR';
+  return symbols[safeCurrency] || safeCurrency;
+}
+
+/**
+ * Format currency amount with symbol safely against null/NaN values.
+ */
+export function formatCurrency(amount: number, currency: string = 'EUR'): string {
+  const num = Number(amount);
+  const safeAmount = Number.isFinite(num) ? num : 0;
+  const symbol = getCurrencySymbol(currency || 'EUR');
+  return `${symbol}${safeAmount.toFixed(2)}`;
+}
+
+/**
+ * Returns today's date in YYYY-MM-DD format.
+ */
+export function getTodayIsoDate(): string {
+  return new Date().toISOString().split('T')[0];
+}
+
+/**
+ * Safely picks a reference date string from a bill.
+ */
+export function getBillReferenceDate(bill: {
+  dueDate?: string;
+  issueDate?: string;
+  createdAt?: string;
+}): string {
+  return bill?.dueDate || bill?.issueDate || bill?.createdAt || '';
+}
+
+/**
+ * Computes days until due date, returning null if the date is missing or invalid.
+ */
+export function getDaysUntilDue(dueDate?: string): number | null {
+  if (!dueDate) return null;
+  try {
+    const parsed = parseISO(dueDate);
+    if (Number.isNaN(parsed.getTime())) return null;
+    const days = differenceInDays(parsed, new Date());
+    return Number.isFinite(days) ? days : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Formats a YYYY-MM string to a readable month label, guarding invalid strings.
+ */
+export function formatYearMonthLabel(ym: string): string {
+  if (!/^\d{4}-\d{2}$/.test(ym)) {
+    return 'Unknown Date';
+  }
+  const [year, month] = ym.split('-');
+  const date = new Date(Number(year), Number(month) - 1, 1);
+  if (Number.isNaN(date.getTime())) {
+    return 'Unknown Date';
+  }
+  return date.toLocaleString('default', { month: 'long', year: 'numeric' });
 }

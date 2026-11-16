@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useHousehold } from '../../context/HouseholdContext';
 import { formatCurrency } from '../../lib/splitCalculator';
-import { X, Copy, Check, CreditCard, Shield, Send, ArrowRight } from 'lucide-react';
+import { DEFAULT_AVATAR_URL } from '../../context/householdStorageAndNormalizers';
+import { X, Copy, Check, Shield, Send } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 interface PaymentInfoModalProps {
@@ -16,17 +17,20 @@ export const PaymentInfoModal: React.FC<PaymentInfoModalProps> = ({ isOpen, onCl
   if (!isOpen) return null;
 
   const adminProfile = profiles.find((p) => p.role === 'admin') || profiles[0];
-  const adminPay = household.adminPaymentInfo;
+  const adminPay = household.adminPaymentInfo || { iban: '', revolut: '', bizum: '', notes: '' };
+  const adminAvatarUrl = adminProfile?.avatarUrl || DEFAULT_AVATAR_URL;
+  const adminDisplayName = adminProfile?.fullName || 'House Admin';
 
   // Calculate this member's total unpaid amount
   let totalPending = 0;
   const unpaidSplits: { billId: string; amount: number; provider: string }[] = [];
 
   bills.forEach((b) => {
-    b.splits.forEach((s) => {
+    (b.splits || []).forEach((s) => {
       if (s.profileId === activeProfile.id && s.status === 'pending') {
-        totalPending += s.amountDue;
-        unpaidSplits.push({ billId: b.id, amount: s.amountDue, provider: b.providerName });
+        const amt = Number(s.amountDue) || 0;
+        totalPending += amt;
+        unpaidSplits.push({ billId: b.id, amount: amt, provider: b.providerName });
       }
     });
   });
@@ -55,8 +59,8 @@ export const PaymentInfoModal: React.FC<PaymentInfoModalProps> = ({ isOpen, onCl
           <div className="flex items-center gap-3">
             <div className="relative">
               <img
-                src={adminProfile.avatarUrl}
-                alt={adminProfile.fullName}
+                src={adminAvatarUrl}
+                alt={adminDisplayName}
                 className="w-10 h-10 rounded-full object-cover ring-2 ring-brand-500/40"
               />
               <span className="absolute -bottom-1 -right-1 bg-amber-500 text-black rounded-full p-0.5">
@@ -65,7 +69,7 @@ export const PaymentInfoModal: React.FC<PaymentInfoModalProps> = ({ isOpen, onCl
             </div>
             <div>
               <h3 className="text-base font-bold text-white">Pay House Admin</h3>
-              <p className="text-xs text-zinc-400">Transfer your share to {adminProfile.fullName}</p>
+              <p className="text-xs text-zinc-400">Transfer your share to {adminDisplayName}</p>
             </div>
           </div>
           <button onClick={onClose} className="p-1 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800">

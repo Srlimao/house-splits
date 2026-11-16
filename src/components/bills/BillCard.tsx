@@ -1,6 +1,7 @@
 import React from 'react';
 import { Bill, BillCategory, Profile } from '../../types';
 import { formatCurrency } from '../../lib/splitCalculator';
+import { DEFAULT_AVATAR_URL } from '../../context/householdStorageAndNormalizers';
 import { BillSplitRow } from './BillSplitRow';
 import {
   Zap,
@@ -16,7 +17,6 @@ import {
   Trash2,
   Check,
   Clock,
-  AlertCircle,
 } from 'lucide-react';
 
 interface BillCardProps {
@@ -67,9 +67,10 @@ export const BillCard: React.FC<BillCardProps> = ({
     }
   };
 
-  const confirmedCount = bill.splits.filter((s) => s.status === 'confirmed_by_admin').length;
-  const awaitingCount = bill.splits.filter((s) => s.status === 'paid_to_admin').length;
-  const isFullySettled = confirmedCount === bill.splits.length && bill.splits.length > 0;
+  const billSplits = bill.splits || [];
+  const confirmedCount = billSplits.filter((s) => s.status === 'confirmed_by_admin').length;
+  const awaitingCount = billSplits.filter((s) => s.status === 'paid_to_admin').length;
+  const isFullySettled = confirmedCount === billSplits.length && billSplits.length > 0;
 
   return (
     <div className="rounded-2xl bg-zinc-900/60 border border-zinc-800/80 overflow-hidden transition-all hover:border-zinc-700/80">
@@ -109,7 +110,7 @@ export const BillCard: React.FC<BillCardProps> = ({
             <div className="flex items-center gap-1.5 mt-2.5">
               <span className="text-[10px] text-zinc-400 font-medium mr-1">Splits:</span>
               <div className="flex items-center -space-x-1.5">
-                {bill.splits.map((s) => {
+                {billSplits.map((s) => {
                   const p = profiles.find((prof) => prof.id === s.profileId);
                   const isConfirmed = s.status === 'confirmed_by_admin';
                   const isSent = s.status === 'paid_to_admin';
@@ -123,8 +124,8 @@ export const BillCard: React.FC<BillCardProps> = ({
                       } (${formatCurrency(s.amountDue, currency)})`}
                     >
                       <img
-                        src={p?.avatarUrl}
-                        alt={p?.fullName}
+                        src={p?.avatarUrl || DEFAULT_AVATAR_URL}
+                        alt={p?.fullName || 'Roommate'}
                         className={`w-6 h-6 rounded-full object-cover ring-2 ${
                           isConfirmed
                             ? 'ring-emerald-500/80'
@@ -208,7 +209,7 @@ export const BillCard: React.FC<BillCardProps> = ({
             }`}
           >
             <span>
-              {confirmedCount}/{bill.splits.length} Paid
+              {confirmedCount}/{billSplits.length} Paid
             </span>
             {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </button>
@@ -240,7 +241,7 @@ export const BillCard: React.FC<BillCardProps> = ({
           </div>
 
           <div className="space-y-2">
-            {bill.splits.map((split) => {
+            {billSplits.map((split) => {
               const profile = profiles.find((p) => p.id === split.profileId);
               const isMe = split.profileId === activeProfile.id;
 

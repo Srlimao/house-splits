@@ -1,6 +1,7 @@
 import React from 'react';
 import { useHousehold } from '../../context/HouseholdContext';
-import { formatCurrency } from '../../lib/splitCalculator';
+import { formatCurrency, getBillReferenceDate } from '../../lib/splitCalculator';
+import { DEFAULT_AVATAR_URL } from '../../context/householdStorageAndNormalizers';
 import { ShieldCheck, Clock, AlertCircle, ArrowRight, Check } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -13,16 +14,15 @@ export const RoommateSettlementSummary: React.FC<RoommateSettlementSummaryProps>
   onOpenSplitsTracker,
   onOpenPaymentInfo,
 }) => {
-  const { bills, profiles, household, activeProfile, confirmSplitPayment } = useHousehold();
-  const isAdmin = activeProfile.role === 'admin';
+  const { bills, profiles, household, activeProfile, confirmSplitPayment, isSystemManager } = useHousehold();
+  const isAdmin = activeProfile.role === 'admin' || isSystemManager;
 
   const now = new Date();
   const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-  const currentMonthBills = bills.filter((b) => {
-    const d = b.dueDate || b.issueDate || b.createdAt;
-    return d.startsWith(currentYearMonth);
-  });
+  const currentMonthBills = bills.filter((b) =>
+    getBillReferenceDate(b).startsWith(currentYearMonth)
+  );
 
   const handleQuickConfirm = (billId: string, profileId: string) => {
     confirmSplitPayment(billId, profileId);
@@ -60,16 +60,17 @@ export const RoommateSettlementSummary: React.FC<RoommateSettlementSummaryProps>
           let pendingReviewBillId: string | null = null;
 
           currentMonthBills.forEach((b) => {
-            b.splits.forEach((s) => {
+            (b.splits || []).forEach((s) => {
               if (s.profileId === profile.id) {
-                totalAssigned += s.amountDue;
+                const amt = Number(s.amountDue) || 0;
+                totalAssigned += amt;
                 if (s.status === 'confirmed_by_admin') {
-                  totalSettled += s.amountDue;
+                  totalSettled += amt;
                 } else if (s.status === 'paid_to_admin') {
-                  totalAwaiting += s.amountDue;
+                  totalAwaiting += amt;
                   if (!pendingReviewBillId) pendingReviewBillId = b.id;
                 } else {
-                  totalUnpaid += s.amountDue;
+                  totalUnpaid += amt;
                 }
               }
             });
@@ -85,7 +86,7 @@ export const RoommateSettlementSummary: React.FC<RoommateSettlementSummaryProps>
             >
               <div className="flex items-center gap-2.5">
                 <img
-                  src={profile.avatarUrl}
+                  src={profile.avatarUrl || DEFAULT_AVATAR_URL}
                   alt={profile.fullName}
                   className="w-9 h-9 rounded-full object-cover ring-1 ring-zinc-700"
                 />
