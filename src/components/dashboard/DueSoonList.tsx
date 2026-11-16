@@ -42,7 +42,17 @@ export const DueSoonList: React.FC<DueSoonListProps> = ({ onSelectBill }) => {
     getBillReferenceDate(b).startsWith(currentYearMonth)
   );
 
+  const isBillSettled = (b: { splits?: { status: string }[] }) => {
+    const s = b.splits || [];
+    return s.length > 0 && s.every((item) => item.status === 'confirmed_by_admin');
+  };
+
   const sortedBills = [...currentMonthBills].sort((a, b) => {
+    const aSettled = isBillSettled(a);
+    const bSettled = isBillSettled(b);
+    if (aSettled !== bSettled) {
+      return aSettled ? 1 : -1;
+    }
     const timeA = new Date(a.dueDate || a.createdAt || 0).getTime() || 0;
     const timeB = new Date(b.dueDate || b.createdAt || 0).getTime() || 0;
     return timeA - timeB;
@@ -65,6 +75,7 @@ export const DueSoonList: React.FC<DueSoonListProps> = ({ onSelectBill }) => {
           const daysLeft = getDaysUntilDue(bill.dueDate);
           const billSplits = bill.splits || [];
           const confirmedCount = billSplits.filter((s) => s.status === 'confirmed_by_admin').length;
+          const isSettled = isBillSettled(bill);
           const mySplit = billSplits.find((s) => s.profileId === activeProfile.id);
 
           return (
@@ -83,19 +94,23 @@ export const DueSoonList: React.FC<DueSoonListProps> = ({ onSelectBill }) => {
                   </h4>
                   <div className="flex items-center gap-2 text-xs text-zinc-400">
                     <span>{cat?.name || 'Utility'}</span>
-                    <span>•</span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3 h-3 text-zinc-500" />
-                      {daysLeft === null ? (
-                        <span>No due date</span>
-                      ) : daysLeft < 0 ? (
-                        <span className="text-rose-400 font-medium">Overdue</span>
-                      ) : daysLeft === 0 ? (
-                        <span className="text-amber-400 font-medium">Due today</span>
-                      ) : (
-                        <span>Due in {daysLeft} days</span>
-                      )}
-                    </span>
+                    {!isSettled && (
+                      <>
+                        <span>•</span>
+                        <span className="flex items-center gap-1">
+                          <Clock className="w-3 h-3 text-zinc-500" />
+                          {daysLeft === null ? (
+                            <span>No due date</span>
+                          ) : daysLeft < 0 ? (
+                            <span className="text-rose-400 font-medium">Overdue</span>
+                          ) : daysLeft === 0 ? (
+                            <span className="text-amber-400 font-medium">Due today</span>
+                          ) : (
+                            <span>Due in {daysLeft} days</span>
+                          )}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -118,7 +133,7 @@ export const DueSoonList: React.FC<DueSoonListProps> = ({ onSelectBill }) => {
                 )}
 
                 <div className="flex items-center gap-1 text-xs">
-                  {billSplits.length > 0 && confirmedCount === billSplits.length ? (
+                  {isSettled ? (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">
                       <CheckCircle2 className="w-3 h-3" />
                       <span>Settled</span>
